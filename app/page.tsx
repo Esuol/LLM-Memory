@@ -13,7 +13,11 @@ export default function Home() {
               Lesson 1: Memory (对话记忆)
             </Link>
           </li>
-          <li className="text-gray-400">Lesson 2: Tools (工具调用)</li>
+          <li>
+            <Link href="/lesson/lesson2-tools" className="text-blue-600 hover:underline">
+              Lesson 2: Tools (工具调用)
+            </Link>
+          </li>
           <li className="text-gray-400">Lesson 3: Agent (智能代理)</li>
         </ul>
       </section>
