@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
 
 // 工具定义
@@ -93,34 +94,53 @@ export async function POST(req: NextRequest) {
 
     // 如果 AI 不调用工具，返回最终答案
     if (!aiMessage.tool_calls) {
-      return NextResponse.json({ message: aiMessage.content });
+      return NextResponse.json({
+        message: aiMessage.content,
+        toolCalls: null
+      });
     }
 
-    // 执行所有工具调用
-    const toolMessages = [];
-    for (const toolCall of aiMessage.tool_calls) {
+    // 提取工具调用信息（用于前端显示）
+    const toolCallsInfo = aiMessage.tool_calls.map((tc: any) => ({
+      name: tc.function.name,
+      args: JSON.parse(tc.function.arguments),
+    }));
+
+    // 并行执行所有工具调用
+    const toolPromises = aiMessage.tool_calls.map(async (toolCall: any) => {
       const functionName = toolCall.function.name;
       let toolResult = "";
+      try {
+        if (functionName === "getCurrentTime") {
+          toolResult = getCurrentTime();
+        } else if (functionName === "getWeather") {
+          const args = JSON.parse(toolCall.function.arguments);
+          toolResult = await getWeather(args.city);
+        } else {
+          toolResult = `错误：未知工具 ${functionName}`;
+        }
 
-      if (functionName === "getCurrentTime") {
-        toolResult = getCurrentTime();
-      } else if (functionName === "getWeather") {
-        const args = JSON.parse(toolCall.function.arguments);
-        toolResult = await getWeather(args.city);
+        console.log(`[工具执行成功] ${functionName}:`, toolResult);
+      } catch (error: any) {
+        toolResult = `工具执行失败: ${error.message || String(error)}`;
+        console.error(`[工具执行失败] ${functionName}:`, error);
       }
 
-      console.log(`[工具执行] ${functionName}:`, toolResult);
-
-      toolMessages.push({
+      return {
         role: "tool",
         tool_call_id: toolCall.id,
         content: toolResult,
-      });
-    }
+      };
+    });
+
+    const toolMessages = await Promise.all(toolPromises);
 
     // 更新消息历史
     currentMessages = [...currentMessages, aiMessage, ...toolMessages];
   }
 
-  return NextResponse.json({ message: "达到最大调用次数限制" });
+  return NextResponse.json({
+    message: "达到最大调用次数限制",
+    toolCalls: null
+  });
 }

@@ -6,6 +6,7 @@ import { useState } from "react";
 export default function Lesson2Tools() {
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -14,6 +15,7 @@ export default function Lesson2Tools() {
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInput("");
+    setLoading(true);
 
     const res = await fetch("/api/tools-chat", {
       method: "POST",
@@ -22,6 +24,8 @@ export default function Lesson2Tools() {
     });
 
     const data = await res.json();
+    setLoading(false);
+
     const aiMessage = { role: "assistant", content: data.message };
     setMessages([...newMessages, aiMessage]);
   };
@@ -47,6 +51,11 @@ export default function Lesson2Tools() {
               <strong>{msg.role}:</strong> {msg.content}
             </div>
           ))
+        )}
+        {loading && (
+          <div className="text-orange-600 animate-pulse">
+            🔧 AI 正在思考和调用工具...
+          </div>
         )}
       </div>
 
