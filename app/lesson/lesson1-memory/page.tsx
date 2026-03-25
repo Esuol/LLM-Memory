@@ -1,3 +1,4 @@
+/* eslint-disable react/no-unescaped-entities */
 "use client";
 
 import { useState } from "react";
@@ -5,17 +6,25 @@ import { useState } from "react";
 export default function Lesson1Memory() {
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [input, setInput] = useState("");
+  console.log(messages);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim()) return;
 
     const userMessage = { role: "user", content: input };
     const newMessages = [...messages, userMessage];
-
-    const aiMessage = { role: "assistant", content: `收到: ${input}` };
-    setMessages([...newMessages, aiMessage]);
-
+    setMessages(newMessages);
     setInput("");
+
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: newMessages }),
+    });
+
+    const data = await res.json();
+    const aiMessage = { role: "assistant", content: data.message };
+    setMessages([...newMessages, aiMessage]);
   };
 
   return (

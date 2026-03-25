@@ -38,6 +38,15 @@ OPENAI_API_KEY=your-key
 OPENAI_BASE_URL=https://your-proxy/v1  # 可选
 ```
 
+## 技术细节
+
+**Tailwind CSS:** 使用 v3.4.19（不是 v4），因为 v4 的 lightningcss 在此系统上有兼容性问题。配置文件：
+- `tailwind.config.ts` - 标准 v3 配置
+- `postcss.config.mjs` - 使用 `tailwindcss` 和 `autoprefixer` 插件
+- `app/globals.css` - 使用 v3 指令：`@tailwind base/components/utilities`
+
+**Next.js:** 默认使用 webpack（不使用 Turbopack），因为 Turbopack 与 Tailwind v3 有模块解析问题。
+
 ## 教学方法
 
 1. **顺序学习** - 课程必须按 Lesson 1 → 2 → 3 顺序完成
