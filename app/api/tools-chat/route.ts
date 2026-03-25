@@ -57,63 +57,15 @@ const model = "gpt-5.4";
 export async function POST(req: NextRequest) {
   const { messages } = await req.json();
 
-  // 第一次调用：让 AI 判断是否需要工具
-  const response = await fetch(
-    `${process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/chat/completions`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        tools,
-        tool_choice: "auto",
-      }),
-    }
-  );
+  let currentMessages = [...messages];
+  const maxIterations = 5; // 防止无限循环
+  let iteration = 0;
 
-  const data = await response.json();
-  const aiMessage = data.choices[0].message;
+  while (iteration < maxIterations) {
+    iteration++;
 
-  // 确保 aiMessage 有 content 字段
-  if (!aiMessage.content) {
-    aiMessage.content = null;
-  }
-
-  console.log('aiMessage', aiMessage);
-
-  // 检查 AI 是否要调用工具
-  if (aiMessage.tool_calls) {
-    const toolCall = aiMessage.tool_calls[0];
-    const functionName = toolCall.function.name;
-
-    // 执行工具
-    let toolResult = "";
-    if (functionName === "getCurrentTime") {
-      toolResult = getCurrentTime();
-    } else if (functionName === "getWeather") {
-      const args = JSON.parse(toolCall.function.arguments);
-      toolResult = await getWeather(args.city);
-    }
-
-    console.log('toolResult:', toolResult);
-    console.log('toolCall.id:', toolCall.id);
-
-    // 把工具结果返回给 AI
-    const finalMessages = [
-      ...messages,
-      aiMessage,
-      {
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: toolResult,
-      },
-    ];
-    console.log('finalMessages:', JSON.stringify(finalMessages, null, 2));
-    const finalResponse = await fetch(
+    // 请求 AI
+    const response = await fetch(
       `${process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/chat/completions`,
       {
         method: "POST",
@@ -123,19 +75,52 @@ export async function POST(req: NextRequest) {
         },
         body: JSON.stringify({
           model,
-          messages: finalMessages,
+          messages: currentMessages,
+          tools,
+          tool_choice: "auto",
         }),
       }
     );
 
-    const finalData = await finalResponse.json();
-    console.log('finalData:', finalData);
-    console.log('final message:', finalData.choices[0].message);
-    return NextResponse.json({ message: finalData.choices[0].message.content });
+    const data = await response.json();
+    const aiMessage = data.choices[0].message;
+
+    if (!aiMessage.content) {
+      aiMessage.content = null;
+    }
+
+    console.log(`[轮次 ${iteration}] AI 响应:`, aiMessage);
+
+    // 如果 AI 不调用工具，返回最终答案
+    if (!aiMessage.tool_calls) {
+      return NextResponse.json({ message: aiMessage.content });
+    }
+
+    // 执行所有工具调用
+    const toolMessages = [];
+    for (const toolCall of aiMessage.tool_calls) {
+      const functionName = toolCall.function.name;
+      let toolResult = "";
+
+      if (functionName === "getCurrentTime") {
+        toolResult = getCurrentTime();
+      } else if (functionName === "getWeather") {
+        const args = JSON.parse(toolCall.function.arguments);
+        toolResult = await getWeather(args.city);
+      }
+
+      console.log(`[工具执行] ${functionName}:`, toolResult);
+
+      toolMessages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: toolResult,
+      });
+    }
+
+    // 更新消息历史
+    currentMessages = [...currentMessages, aiMessage, ...toolMessages];
   }
 
-
-
-  // AI 不需要工具，直接返回
-  return NextResponse.json({ message: aiMessage.content });
+  return NextResponse.json({ message: "达到最大调用次数限制" });
 }
