@@ -16,10 +16,13 @@ export default function Lesson1Memory() {
     setMessages(newMessages);
     setInput("");
 
-    const res = await fetch("/api/chat", {
+    const res = await fetch("/api/langchain-chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: newMessages }),
+      body: JSON.stringify({
+        message: input,
+        sessionId: "user-123"
+      }),
     });
 
     const data = await res.json();
