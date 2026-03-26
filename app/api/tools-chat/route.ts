@@ -58,89 +58,116 @@ const model = "gpt-5.4";
 export async function POST(req: NextRequest) {
   const { messages } = await req.json();
 
-  let currentMessages = [...messages];
-  const maxIterations = 5; // 防止无限循环
-  let iteration = 0;
+  // 创建流式响应
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: any) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      };
 
-  while (iteration < maxIterations) {
-    iteration++;
+      let currentMessages = [...messages];
+      const maxIterations = 5;
+      let iteration = 0;
 
-    // 请求 AI
-    const response = await fetch(
-      `${process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: currentMessages,
-          tools,
-          tool_choice: "auto",
-        }),
-      }
-    );
-
-    const data = await response.json();
-    const aiMessage = data.choices[0].message;
-
-    if (!aiMessage.content) {
-      aiMessage.content = null;
-    }
-
-    console.log(`[轮次 ${iteration}] AI 响应:`, aiMessage);
-
-    // 如果 AI 不调用工具，返回最终答案
-    if (!aiMessage.tool_calls) {
-      return NextResponse.json({
-        message: aiMessage.content,
-        toolCalls: null
-      });
-    }
-
-    // 提取工具调用信息（用于前端显示）
-    const toolCallsInfo = aiMessage.tool_calls.map((tc: any) => ({
-      name: tc.function.name,
-      args: JSON.parse(tc.function.arguments),
-    }));
-
-    // 并行执行所有工具调用
-    const toolPromises = aiMessage.tool_calls.map(async (toolCall: any) => {
-      const functionName = toolCall.function.name;
-      let toolResult = "";
       try {
-        if (functionName === "getCurrentTime") {
-          toolResult = getCurrentTime();
-        } else if (functionName === "getWeather") {
-          const args = JSON.parse(toolCall.function.arguments);
-          toolResult = await getWeather(args.city);
-        } else {
-          toolResult = `错误：未知工具 ${functionName}`;
+        while (iteration < maxIterations) {
+          iteration++;
+
+          // 请求 AI
+          const response = await fetch(
+            `${process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/chat/completions`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              },
+              body: JSON.stringify({
+                model,
+                messages: currentMessages,
+                tools,
+                tool_choice: "auto",
+              }),
+            }
+          );
+
+          const data = await response.json();
+          const aiMessage = data.choices[0].message;
+
+          if (!aiMessage.content) {
+            aiMessage.content = null;
+          }
+
+          console.log(`[轮次 ${iteration}] AI 响应:`, aiMessage);
+
+          // 如果 AI 不调用工具，返回最终答案
+          if (!aiMessage.tool_calls) {
+            send({ type: "message", content: aiMessage.content });
+            controller.close();
+            return;
+          }
+
+          // 发送工具调用信息
+          for (const tc of aiMessage.tool_calls) {
+            const args = JSON.parse(tc.function.arguments);
+            send({
+              type: "tool_call",
+              name: tc.function.name,
+              args,
+            });
+          }
+
+          // 并行执行所有工具调用
+          const toolPromises = aiMessage.tool_calls.map(async (toolCall: any) => {
+            const functionName = toolCall.function.name;
+            let toolResult = "";
+            try {
+              if (functionName === "getCurrentTime") {
+                toolResult = getCurrentTime();
+              } else if (functionName === "getWeather") {
+                const args = JSON.parse(toolCall.function.arguments);
+                toolResult = await getWeather(args.city);
+              } else {
+                toolResult = `错误：未知工具 ${functionName}`;
+              }
+
+              console.log(`[工具执行成功] ${functionName}:`, toolResult);
+            } catch (error: any) {
+              toolResult = `工具执行失败: ${error.message || String(error)}`;
+              console.error(`[工具执行失败] ${functionName}:`, error);
+            }
+
+            return {
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: toolResult,
+            };
+          });
+
+          const toolMessages = await Promise.all(toolPromises);
+
+          // 发送工具执行完成
+          send({ type: "tool_done" });
+
+          // 更新消息历史
+          currentMessages = [...currentMessages, aiMessage, ...toolMessages];
         }
 
-        console.log(`[工具执行成功] ${functionName}:`, toolResult);
+        send({ type: "error", content: "达到最大调用次数限制" });
+        controller.close();
       } catch (error: any) {
-        toolResult = `工具执行失败: ${error.message || String(error)}`;
-        console.error(`[工具执行失败] ${functionName}:`, error);
+        send({ type: "error", content: error.message });
+        controller.close();
       }
+    },
+  });
 
-      return {
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: toolResult,
-      };
-    });
-
-    const toolMessages = await Promise.all(toolPromises);
-
-    // 更新消息历史
-    currentMessages = [...currentMessages, aiMessage, ...toolMessages];
-  }
-
-  return NextResponse.json({
-    message: "达到最大调用次数限制",
-    toolCalls: null
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
   });
 }

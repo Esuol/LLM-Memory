@@ -7,6 +7,7 @@ export default function Lesson2Tools() {
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [toolStatus, setToolStatus] = useState<string[]>([]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -16,6 +17,7 @@ export default function Lesson2Tools() {
     setMessages(newMessages);
     setInput("");
     setLoading(true);
+    setToolStatus([]);
 
     const res = await fetch("/api/tools-chat", {
       method: "POST",
@@ -23,11 +25,41 @@ export default function Lesson2Tools() {
       body: JSON.stringify({ messages: newMessages }),
     });
 
-    const data = await res.json();
-    setLoading(false);
+    const reader = res.body?.getReader();
+    const decoder = new TextDecoder();
 
-    const aiMessage = { role: "assistant", content: data.message };
-    setMessages([...newMessages, aiMessage]);
+    if (!reader) return;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const lines = chunk.split("\n");
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = JSON.parse(line.slice(6));
+
+          if (data.type === "tool_call") {
+            const args = JSON.stringify(data.args);
+            setToolStatus((prev) => [...prev, `🔧 调用 ${data.name}${args}`]);
+          } else if (data.type === "tool_done") {
+            setToolStatus((prev) => [...prev, "✅ 工具执行完成"]);
+          } else if (data.type === "message") {
+            setLoading(false);
+            setToolStatus([]);
+            const aiMessage = { role: "assistant", content: data.content };
+            setMessages([...newMessages, aiMessage]);
+          } else if (data.type === "error") {
+            setLoading(false);
+            setToolStatus([]);
+            const aiMessage = { role: "assistant", content: `错误: ${data.content}` };
+            setMessages([...newMessages, aiMessage]);
+          }
+        }
+      }
+    }
   };
 
   return (
@@ -53,8 +85,11 @@ export default function Lesson2Tools() {
           ))
         )}
         {loading && (
-          <div className="text-orange-600 animate-pulse">
-            🔧 AI 正在思考和调用工具...
+          <div className="text-orange-600">
+            {toolStatus.map((status, i) => (
+              <div key={i} className="mb-1">{status}</div>
+            ))}
+            {toolStatus.length === 0 && <div className="animate-pulse">🤔 AI 正在思考...</div>}
           </div>
         )}
       </div>
