@@ -133,9 +133,22 @@ export async function POST(req: NextRequest) {
               }
 
               console.log(`[工具执行成功] ${functionName}:`, toolResult);
+
+              // 发送工具执行结果
+              send({
+                type: "tool_result",
+                name: functionName,
+                result: toolResult,
+              });
             } catch (error: any) {
               toolResult = `工具执行失败: ${error.message || String(error)}`;
               console.error(`[工具执行失败] ${functionName}:`, error);
+
+              send({
+                type: "tool_result",
+                name: functionName,
+                result: toolResult,
+              });
             }
 
             return {

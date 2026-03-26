@@ -9,6 +9,12 @@ export default function Lesson2Tools() {
   const [loading, setLoading] = useState(false);
   const [toolStatus, setToolStatus] = useState<string[]>([]);
 
+  // 工具名称映射
+  const toolNames: Record<string, string> = {
+    getCurrentTime: "获取当前时间",
+    getWeather: "查询天气",
+  };
+
   const handleSend = async () => {
     if (!input.trim()) return;
 
@@ -42,10 +48,17 @@ export default function Lesson2Tools() {
           const data = JSON.parse(line.slice(6));
 
           if (data.type === "tool_call") {
-            const args = JSON.stringify(data.args);
-            setToolStatus((prev) => [...prev, `🔧 调用 ${data.name}${args}`]);
+            const friendlyName = toolNames[data.name] || data.name;
+            const args = Object.entries(data.args)
+              .map(([k, v]) => v)
+              .join(", ");
+            const argsText = args ? `(${args})` : "";
+            setToolStatus((prev) => [...prev, `🔧 ${friendlyName}${argsText}`]);
+          } else if (data.type === "tool_result") {
+            const friendlyName = toolNames[data.name] || data.name;
+            setToolStatus((prev) => [...prev, `✅ ${friendlyName}: ${data.result}`]);
           } else if (data.type === "tool_done") {
-            setToolStatus((prev) => [...prev, "✅ 工具执行完成"]);
+            setToolStatus((prev) => [...prev, "✅ 所有工具执行完成"]);
           } else if (data.type === "message") {
             setLoading(false);
             setToolStatus([]);
