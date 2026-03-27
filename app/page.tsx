@@ -34,6 +34,11 @@ export default function Home() {
               记忆增强 Agent (长期记忆系统)
             </Link>
           </li>
+          <li>
+            <Link href="/lesson/multi-agent" className="text-blue-600 hover:underline">
+              多 Agent 协作 (Plan-Execute)
+            </Link>
+          </li>
         </ul>
       </section>
 
