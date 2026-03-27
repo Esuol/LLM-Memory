@@ -33,6 +33,35 @@ const tools = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "searchRestaurant",
+      description: "搜索餐厅信息（可能失败，失败时可以尝试 getLocalGuide）",
+      parameters: {
+        type: "object",
+        properties: {
+          city: { type: "string", description: "城市名称" },
+          cuisine: { type: "string", description: "菜系类型，如：川菜、粤菜" },
+        },
+        required: ["city"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getLocalGuide",
+      description: "获取本地生活指南（餐厅、景点等，作为 searchRestaurant 的备选方案）",
+      parameters: {
+        type: "object",
+        properties: {
+          city: { type: "string", description: "城市名称" },
+        },
+        required: ["city"],
+      },
+    },
+  },
 ];
 
 // 工具实现
@@ -58,6 +87,19 @@ function getIndoorActivities() {
   return "推荐室内活动：博物馆、电影院、图书馆、购物中心、咖啡馆";
 }
 
+function searchRestaurant(city: string, cuisine?: string) {
+  // 模拟 70% 失败率
+  if (Math.random() < 0.7) {
+    throw new Error("餐厅搜索服务暂时不可用");
+  }
+  const cuisineText = cuisine ? `${cuisine}餐厅` : "餐厅";
+  return `${city}的${cuisineText}推荐：老字号饭店、特色小吃街`;
+}
+
+function getLocalGuide(city: string) {
+  return `${city}本地指南：推荐餐厅有老字号饭店、特色小吃街；景点有博物馆、公园`;
+}
+
 const model = "gpt-5.4";
 
 export async function POST(req: NextRequest) {
@@ -78,6 +120,12 @@ export async function POST(req: NextRequest) {
 2. 行动(Action)：调用工具执行操作
 3. 观察(Observation)：查看工具返回结果
 4. 重复上述过程，直到完成任务
+
+错误处理策略：
+- 如果工具失败，分析失败原因
+- 不要重复调用相同的失败工具
+- 尝试使用备选工具（如 searchRestaurant 失败时用 getLocalGuide）
+- 如果所有方案都失败，向用户说明情况
 
 重要：你必须根据工具返回的实际结果来决策，不要假设结果。`,
       };
@@ -152,6 +200,10 @@ export async function POST(req: NextRequest) {
                 toolResult = await getWeather(args.city);
               } else if (functionName === "getIndoorActivities") {
                 toolResult = getIndoorActivities();
+              } else if (functionName === "searchRestaurant") {
+                toolResult = searchRestaurant(args.city, args.cuisine);
+              } else if (functionName === "getLocalGuide") {
+                toolResult = getLocalGuide(args.city);
               } else {
                 toolResult = `错误：未知工具 ${functionName}`;
               }
