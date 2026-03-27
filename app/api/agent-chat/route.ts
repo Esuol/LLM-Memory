@@ -70,14 +70,24 @@ function getCurrentTime() {
 }
 
 async function getWeather(city: string) {
-  const url = `https://wttr.in/${encodeURIComponent(city)}?format=j1&lang=zh`;
+  const cityCoords: Record<string, { lat: number; lon: number }> = {
+    北京: { lat: 39.9042, lon: 116.4074 },
+    上海: { lat: 31.2304, lon: 121.4737 },
+    广州: { lat: 23.1291, lon: 113.2644 },
+    深圳: { lat: 22.5431, lon: 114.0579 },
+    杭州: { lat: 30.2741, lon: 120.1551 },
+  };
+
+  const coords = cityCoords[city] || cityCoords["北京"];
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current=temperature_2m,weather_code&timezone=Asia/Shanghai`;
+
   try {
     const res = await fetch(url);
     const data = await res.json();
-    const current = data.current_condition[0];
-    const temp = current.temp_C;
-    const desc = current.lang_zh[0].value;
-    return `${city}：${desc}，${temp}°C`;
+    const temp = Math.round(data.current.temperature_2m);
+    const weatherCode = data.current.weather_code;
+    const weatherDesc = weatherCode === 0 ? "晴" : weatherCode < 3 ? "多云" : weatherCode < 70 ? "阴" : "雨";
+    return `${city}：${weatherDesc}，${temp}°C`;
   } catch {
     return `无法获取${city}的天气信息`;
   }

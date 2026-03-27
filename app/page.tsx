@@ -26,6 +26,17 @@ export default function Home() {
         </ul>
       </section>
 
+      <section className="mb-8">
+        <h2 className="text-2xl font-semibold mb-4">高级主题</h2>
+        <ul className="space-y-2">
+          <li>
+            <Link href="/lesson/memory-agent" className="text-blue-600 hover:underline">
+              记忆增强 Agent (长期记忆系统)
+            </Link>
+          </li>
+        </ul>
+      </section>
+
       <section>
         <h2 className="text-2xl font-semibold mb-4">项目</h2>
         <ul className="space-y-2">
