@@ -1,14 +1,26 @@
 [
   {
-    "id": "1774590306960",
-    "content": "用户叫小红",
-    "timestamp": 1774590306960,
-    "type": "fact"
-  },
-  {
     "id": "1774590507200",
     "content": "用户喜欢简洁语言描述",
     "timestamp": 1774590507200,
+    "type": "preference"
+  },
+  {
+    "id": "1774592676960",
+    "content": "用户喜欢简洁语言",
+    "timestamp": 1774592676960,
+    "type": "preference"
+  },
+  {
+    "id": "1774592686991",
+    "content": "用户叫小红",
+    "timestamp": 1774592686991,
+    "type": "fact"
+  },
+  {
+    "id": "1774592686994",
+    "content": "用户喜欢简洁语言",
+    "timestamp": 1774592686994,
     "type": "preference"
   }
 ]

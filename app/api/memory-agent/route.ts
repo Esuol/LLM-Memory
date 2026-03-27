@@ -10,6 +10,7 @@ interface Memory {
   content: string;
   timestamp: number;
   type: "preference" | "task" | "fact";
+  deprecated?: boolean;
 }
 
 class MemorySystem {
@@ -19,6 +20,7 @@ class MemorySystem {
   constructor() {
     this.memoryFile = path.join(process.cwd(), "agent_memory.json");
     this.loadMemories();
+    this.cleanupMemories();  // 启动时自动清理
   }
 
   private loadMemories() {
@@ -43,6 +45,9 @@ class MemorySystem {
 
   // 添加记忆
   addMemory(content: string, type: Memory["type"]) {
+    // 检测冲突
+    this.detectAndMarkConflicts(content, type);
+
     const memory: Memory = {
       id: Date.now().toString(),
       content,
@@ -54,26 +59,54 @@ class MemorySystem {
     return memory;
   }
 
+  // 检测并标记冲突记忆
+  private detectAndMarkConflicts(newContent: string, type: Memory["type"]) {
+    const conflictPatterns = [
+      { pattern: /用户叫(.+)/, key: "name" },
+      { pattern: /用户喜欢(.+)回答/, key: "style" },
+      { pattern: /用户的生日是(.+)/, key: "birthday" },
+    ];
+
+    for (const { pattern, key } of conflictPatterns) {
+      const newMatch = newContent.match(pattern);
+      if (!newMatch) continue;
+
+      // 查找相同类型的旧记忆
+      for (const memory of this.memories) {
+        if (memory.type === type && !memory.deprecated) {
+          const oldMatch = memory.content.match(pattern);
+          if (oldMatch && oldMatch[1] !== newMatch[1]) {
+            // 发现冲突，标记为过期
+            memory.deprecated = true;
+            console.log(`[记忆冲突] 标记过期: ${memory.content}`);
+          }
+        }
+      }
+    }
+  }
+
   // 检索相关记忆（简单的关键词匹配，生产环境应使用向量相似度）
   retrieveMemories(query: string, limit: number = 3): Memory[] {
     const keywords = query.toLowerCase().split(/\s+/);
-    const scored = this.memories.map((memory) => {
-      const content = memory.content.toLowerCase();
-      let score = 0;
+    const scored = this.memories
+      .filter(m => !m.deprecated)  // 过滤过期记忆
+      .map((memory) => {
+        const content = memory.content.toLowerCase();
+        let score = 0;
 
-      // 关键词匹配
-      for (const keyword of keywords) {
-        if (content.includes(keyword)) score += 2;
-      }
+        // 关键词匹配
+        for (const keyword of keywords) {
+          if (content.includes(keyword)) score += 2;
+        }
 
-      // 语义相关性（简单规则）
-      if ((keywords.some(k => ['名字', '叫', '称呼', '谁'].includes(k)) && content.includes('叫')) ||
-          (keywords.some(k => ['喜欢', '偏好', '风格'].includes(k)) && memory.type === 'preference')) {
-        score += 1;
-      }
+        // 语义相关性（简单规则）
+        if ((keywords.some(k => ['名字', '叫', '称呼', '谁'].includes(k)) && content.includes('叫')) ||
+            (keywords.some(k => ['喜欢', '偏好', '风格'].includes(k)) && memory.type === 'preference')) {
+          score += 1;
+        }
 
-      return { memory, score };
-    });
+        return { memory, score };
+      });
 
     return scored
       .filter((item) => item.score > 0)
@@ -85,6 +118,7 @@ class MemorySystem {
   // 获取最近的记忆
   getRecentMemories(limit: number = 5): Memory[] {
     return this.memories
+      .filter(m => !m.deprecated)  // 过滤过期记忆
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, limit);
   }
@@ -93,6 +127,32 @@ class MemorySystem {
   clearMemories() {
     this.memories = [];
     this.saveMemories();
+  }
+
+  // 清理过期记忆（30天规则 + 过期标记）
+  cleanupMemories() {
+    const now = Date.now();
+    const maxAge = {
+      preference: 90 * 24 * 60 * 60 * 1000,  // 90天
+      fact: 180 * 24 * 60 * 60 * 1000,       // 180天
+      task: 30 * 24 * 60 * 60 * 1000,        // 30天
+    };
+
+    const before = this.memories.length;
+    this.memories = this.memories.filter(memory => {
+      // 删除已标记为过期的
+      if (memory.deprecated) return false;
+
+      // 删除超过时间限制的
+      const age = now - memory.timestamp;
+      return age < maxAge[memory.type];
+    });
+
+    const removed = before - this.memories.length;
+    if (removed > 0) {
+      this.saveMemories();
+      console.log(`[记忆清理] 删除了 ${removed} 条过期记忆`);
+    }
   }
 }
 
@@ -132,6 +192,10 @@ class WorkingMemory {
   }
 
   completeStep(step: string, result: any) {
+    if (!this.state) {
+      // 如果没有初始化任务，自动创建
+      this.initTask("执行工具调用");
+    }
     if (this.state) {
       this.state.completedSteps.push(step);
       this.state.results[step] = result;
@@ -145,7 +209,9 @@ class WorkingMemory {
 
   getSummary(): string {
     if (!this.state) return "无任务";
-    return `目标: ${this.state.goal}\n已完成: ${this.state.completedSteps.length}/${this.state.steps.length} 步`;
+    const completed = this.state.completedSteps.length;
+    if (completed === 0) return "无任务";
+    return `已完成 ${completed} 个步骤：${this.state.completedSteps.join(", ")}`;
   }
 }
 
@@ -207,6 +273,14 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "cleanupMemories",
+      description: "清理过期的长期记忆（删除标记为过期的记忆和超过时间限制的记忆）",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 // ==================== 工具实现 ====================
@@ -257,6 +331,11 @@ function recallMemory(query: string) {
     .join("\n");
 }
 
+function cleanupMemories() {
+  memorySystem.cleanupMemories();
+  return "已清理过期记忆";
+}
+
 const model = "gpt-5.4";
 
 // ==================== API 路由 ====================
@@ -299,16 +378,20 @@ export async function POST(req: NextRequest) {
 
 工作流程：
 1. 分析用户请求，检索相关长期记忆
-2. 规划任务步骤
-3. 执行工具调用
-4. 保存重要信息到长期记忆
+2. 直接调用工具执行任务（不要只说需要几步，要立即执行）
+3. 每步的结果会自动保存到工作记忆
+4. 完成任务后，保存重要信息到长期记忆
 5. 返回结果
 
 重要原则：
 - 用户提到偏好时，使用 saveMemory 保存
 - 需要回忆历史信息时，使用 recallMemory 检索
 - 根据记忆调整回答（如用户喜欢简洁回答，就简洁回答）
-${memoryContext}`,
+- 多步骤任务时，直接并行或顺序调用工具，不要只描述步骤
+- 可以在最终回答中引用之前步骤的结果
+${memoryContext}
+
+当前工作记忆状态：${workingMemory.getSummary()}`,
       };
 
       let currentMessages = [systemPrompt, ...messages];
@@ -378,10 +461,14 @@ ${memoryContext}`,
                 toolResult = getCurrentTime();
               } else if (functionName === "getWeather") {
                 toolResult = await getWeather(args.city);
+                // 保存到工作记忆
+                workingMemory.completeStep(`查询${args.city}天气`, toolResult);
               } else if (functionName === "saveMemory") {
                 toolResult = saveMemory(args.content, args.type);
               } else if (functionName === "recallMemory") {
                 toolResult = recallMemory(args.query);
+              } else if (functionName === "cleanupMemories") {
+                toolResult = cleanupMemories();
               } else {
                 toolResult = `错误：未知工具 ${functionName}`;
               }
