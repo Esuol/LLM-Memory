@@ -18,7 +18,11 @@ export default function Home() {
               Lesson 2: Tools (工具调用)
             </Link>
           </li>
-          <li className="text-gray-400">Lesson 3: Agent (智能代理)</li>
+          <li>
+            <Link href="/lesson/lesson3-agent" className="text-blue-600 hover:underline">
+              Lesson 3: Agent (自主决策)
+            </Link>
+          </li>
         </ul>
       </section>
 
