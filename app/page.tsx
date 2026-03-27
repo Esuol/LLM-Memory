@@ -39,6 +39,11 @@ export default function Home() {
               多 Agent 协作 (Plan-Execute)
             </Link>
           </li>
+          <li>
+            <Link href="/lesson/multi-agent-queue" className="text-blue-600 hover:underline">
+              多 Agent 协作 (消息队列版)
+            </Link>
+          </li>
         </ul>
       </section>
 
