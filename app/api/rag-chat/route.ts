@@ -13,7 +13,29 @@ const documents = [
   "Astro 3.0 支持视图过渡动画和图片优化",
 ];
 
-// ==================== 简单的相似度计算 ====================
+// ==================== 真实 Embedding API ====================
+
+async function getEmbedding(text: string): Promise<number[]> {
+  const response = await fetch(
+    `${process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/embeddings`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "text-embedding-3-small",
+        input: text,
+      }),
+    }
+  );
+
+  const data = await response.json();
+  return data.data[0].embedding;
+}
+
+// ==================== 余弦相似度 ====================
 
 function cosineSimilarity(a: number[], b: number[]): number {
   const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
@@ -22,26 +44,18 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dotProduct / (magnitudeA * magnitudeB);
 }
 
-// ==================== 简化版 Embedding（词频向量）====================
-
-function simpleEmbedding(text: string): number[] {
-  const words = text.toLowerCase().match(/[\u4e00-\u9fa5a-z0-9]+/g) || [];
-  const vocab = [
-    "next", "react", "tailwind", "typescript", "vite", "node", "bun", "astro",
-    "16", "19", "v4", "5", "20", "1", "3",
-    "发布", "引入", "使用", "支持", "提供", "优化"
-  ];
-  return vocab.map((word) => words.filter((w) => w.includes(word)).length);
-}
-
 // ==================== 检索 ====================
 
-function retrieve(query: string, topK = 2): string[] {
-  const queryEmbedding = simpleEmbedding(query);
-  const scores = documents.map((doc) => ({
-    doc,
-    score: cosineSimilarity(queryEmbedding, simpleEmbedding(doc)),
-  }));
+async function retrieve(query: string, topK = 2): Promise<string[]> {
+  const queryEmbedding = await getEmbedding(query);
+
+  const scores = await Promise.all(
+    documents.map(async (doc) => ({
+      doc,
+      score: cosineSimilarity(queryEmbedding, await getEmbedding(doc)),
+    }))
+  );
+
   scores.sort((a, b) => b.score - a.score);
   return scores.slice(0, topK).map((s) => s.doc);
 }
@@ -51,8 +65,8 @@ function retrieve(query: string, topK = 2): string[] {
 export async function POST(req: NextRequest) {
   const { question } = await req.json();
 
-  // 1. 检索相关文档
-  const relevantDocs = retrieve(question);
+  // 1. 检索相关文档（使用真实 Embedding）
+  const relevantDocs = await retrieve(question);
 
   const context = relevantDocs.join("\n");
   console.log('relevantDocs', relevantDocs,'context',context);
