@@ -34,11 +34,16 @@ export default function RagPage() {
         <p className="text-gray-700 mb-6">检索增强生成 - 让 LLM 访问外部知识</p>
 
         <div className="bg-white rounded-lg shadow p-6 mb-4">
-          <h2 className="font-semibold mb-2 text-gray-900">知识库</h2>
+          <h2 className="font-semibold mb-2 text-gray-900">知识库（8 条文档）</h2>
           <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded">
             <p>• Next.js 16 发布于 2024年12月</p>
             <p>• React 19 引入了 Server Components</p>
             <p>• Tailwind CSS v4 使用 Rust 引擎</p>
+            <p>• TypeScript 5.0 引入了装饰器</p>
+            <p>• Vite 5.0 提供了更快的冷启动</p>
+            <p>• Node.js 20 是新的 LTS 版本</p>
+            <p>• Bun 1.0 是最快的 JavaScript 运行时</p>
+            <p>• Astro 3.0 支持视图过渡动画</p>
           </div>
         </div>
 
