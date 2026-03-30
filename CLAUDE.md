@@ -6,20 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 这是一个 AI Agent 学习项目，目标是从"API 调用者"成长为"AI Agent 开发者"。
 
-**技术栈：** Next.js、React、TypeScript、ESLint、LangChain (JS)、OpenAI API
-**当前阶段：** Lesson 1 (Memory) - 进行中
+**技术栈：** Next.js 16、React 19、TypeScript、LangChain.js、OpenAI API
+**当前阶段：** 已完成 Lesson 1-3 + 多 Agent 协作，准备进入 RAG 阶段
 
 ## 项目架构
 
-这是一个 Next.js App Router 应用，通过路由组织课程和项目：
+Next.js App Router 应用，采用 **课程页面 + API 路由** 的双层架构：
 
-**路由结构：**
-- `/lesson/lesson1-memory` - Lesson 1: 对话记忆机制
-- `/lesson/lesson2-tools` - Lesson 2: 工具和函数调用
-- `/lesson/lesson3-agent` - Lesson 3: Agent 自主决策
-- `/project/project1-memory-chat` - Project 1: 多轮对话
-- `/project/project2-tool-agent` - Project 2: 工具调用 Agent
-- `/project/project3-ai-assistant` - Project 3: 完整 AI 助手
+**已完成课程：**
+- `/lesson/lesson1-memory` → `/api/langchain-chat` - 对话记忆（BufferMemory）
+- `/lesson/lesson2-tools` → `/api/tools-chat` - 工具调用（Function Calling）
+- `/lesson/lesson3-agent` → `/api/agent-chat` - Agent 决策（ReAct 模式）
+- `/lesson/memory-agent` → `/api/memory-agent` - 记忆增强 Agent
+- `/lesson/multi-agent` → `/api/multi-agent` - 多 Agent 协作（直接通信）
+- `/lesson/multi-agent-queue` → `/api/multi-agent-queue` - 消息队列版多 Agent
+
+**架构模式：**
+- 前端：React 客户端组件 + SSE 流式响应
+- 后端：Next.js API Routes + OpenAI SDK
+- 多 Agent：消息队列 + 事件驱动（Planner → Worker → Coordinator）
 
 ## 常用命令
 
@@ -38,33 +43,43 @@ OPENAI_API_KEY=your-key
 OPENAI_BASE_URL=https://your-proxy/v1  # 可选
 ```
 
-## 技术细节
+## 核心技术细节
 
-**Tailwind CSS:** 使用 v3.4.19（不是 v4），因为 v4 的 lightningcss 在此系统上有兼容性问题。配置文件：
-- `tailwind.config.ts` - 标准 v3 配置
-- `postcss.config.mjs` - 使用 `tailwindcss` 和 `autoprefixer` 插件
-- `app/globals.css` - 使用 v3 指令：`@tailwind base/components/utilities`
+**API 路由模式：**
+- 所有 LLM 调用在 `/api/*` 路由中完成
+- 使用 Server-Sent Events (SSE) 实现流式响应
+- 标准格式：`data: ${JSON.stringify({type, content})}\n\n`
+
+**多 Agent 通信：**
+- 消息队列：`MessageQueue` 类实现发布/订阅模式
+- Agent 角色：Planner（规划）→ Worker（执行）→ Coordinator（汇总）
+- 消息类型：`task`（任务）、`result`（结果）、`done`（完成）
+
+**LangChain 集成：**
+- Memory: `BufferMemory` 存储对话历史
+- Tools: `DynamicStructuredTool` 定义工具
+- Agent: `createReactAgent` 实现 ReAct 模式
+
+**Tailwind CSS:** 使用 v3.4.19（不是 v4），因为 v4 的 lightningcss 在此系统上有兼容性问题。
 
 **Next.js:** 默认使用 webpack（不使用 Turbopack），因为 Turbopack 与 Tailwind v3 有模块解析问题。
 
 ## 教学方法
 
-1. **顺序学习** - 课程必须按 Lesson 1 → 2 → 3 顺序完成
+1. **顺序学习** - 课程按 Memory → Tools → Agent → Multi-Agent 递进
 2. **原理先行** - 先解释概念，再实现代码
-3. **渐进复杂度** - 提供最小可运行示例，而非完整解决方案
+3. **最小示例** - 提供可运行的最小实现，避免过度工程
 4. **引导发现** - 通过提问引导思考，而非直接给答案
-5. **动手实践** - 每个课程必须包含可执行代码和练习任务
-6. **过程留痕** - 每个课程讲解过程中，生成代码过程中，留下分析过程，ANALYSIS.md
-7. **最后留痕** - 每个课程结束会在对应课程文件夹留下summary.md
+5. **过程留痕** - 每个课程生成 `ANALYSIS.md`（分析过程）和 `summary.md`（总结）
 
-## 回复格式
+## 下一步学习路径
 
-- **问题理解** - 理解用户的问题
-- **核心知识** - 讲解关键概念
-- **示例代码** - 提供最小示例
-- **练习任务** - 给出实践任务
+**推荐：Lesson 4 - RAG (检索增强生成)**
+- 向量数据库集成（Pinecone/Chroma）
+- Embedding 生成和语义搜索
+- 上下文注入和知识库构建
 
-## 当前重点
-
-优先完成 Lesson 1 (Memory) 和 Project 1 (Memory Chat)。用户必须通过解释概念和独立实现来证明理解，才能进入下一课程。
+**后续方向：**
+- Lesson 5: Agent 工作流编排（LangGraph）
+- Lesson 6: Agent 可观测性（LangSmith）
 

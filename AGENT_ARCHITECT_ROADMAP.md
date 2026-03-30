@@ -21,9 +21,9 @@
 
 ---
 
-## 第二阶段：高级架构（进行中）
+## 第二阶段：高级架构（已完成）
 
-### A. 记忆增强 Agent ⭐
+### ✅ A. 记忆增强 Agent
 **核心概念：**
 - 短期记忆（对话历史）
 - 长期记忆（向量数据库）
@@ -36,7 +36,7 @@
 工作记忆：当前任务的中间状态
 ```
 
-### B. 多 Agent 协作
+### ✅ B. 多 Agent 协作
 **核心概念：**
 - Agent 角色分工（规划者、执行者、评审者）
 - Agent 间通信协议
@@ -46,6 +46,23 @@
 ```
 用户 → 规划 Agent → 拆分任务 → 执行 Agent 1/2/3 → 汇总 Agent → 用户
 ```
+
+**已实现两种模式：**
+1. 直接通信版（`/lesson/multi-agent`）
+2. 消息队列版（`/lesson/multi-agent-queue`）- 完全解耦
+
+## 第三阶段：知识增强（下一步）
+
+### 🎯 RAG (检索增强生成) - 推荐优先
+**核心概念：**
+- 向量数据库（Pinecone/Chroma）
+- Embedding 生成与语义搜索
+- 上下文注入与知识库构建
+
+**为什么重要：**
+- 解决 LLM 知识过时问题
+- 让 Agent 访问外部知识库
+- 企业级 AI 应用的核心技术
 
 ### C. Agent 规划能力
 **核心概念：**
@@ -85,7 +102,7 @@
 
 ---
 
-## 第三阶段：生产级架构
+## 第四阶段：生产级架构
 
 ### 1. 可观测性（Observability）
 - 日志系统
@@ -119,7 +136,7 @@
 
 ---
 
-## 第四阶段：实战模式
+## 第五阶段：实战模式
 
 ### Pattern 1: ReAct Agent
 ```
@@ -180,37 +197,45 @@ app/api/{module-name}/
 - `ANALYSIS.md` - 核心概念、实现原理、代码解析、优化方向
 - `summary.md` - 学习收获、关键要点、下一步方向
 
-### 当前进度：第二阶段 - A → B
-接下来依次学习：
+### 当前进度：第二阶段完成 → 第三阶段（RAG）
 
-1. **✅ 记忆增强 Agent**（已完成 A 模块优化）
-   - ✅ 实现短期/长期/工作记忆
-   - ✅ 记忆检索与更新
-   - ✅ 记忆冲突检测
-   - ✅ 记忆清理策略
-   - 📄 文档：`app/lesson/memory-agent/ANALYSIS.md`
+**已完成模块：**
 
-2. **🔄 多 Agent 协作**（进行中）
-   - 实现规划者-执行者模式
-   - Agent 间消息传递
-   - 📄 文档：`app/lesson/memory-agent/MULTI_AGENT_ANALYSIS.md`（理论已完成）
+1. **✅ Lesson 1: Memory**（记忆机制）
+   - 📄 `app/lesson/lesson1-memory/`
 
-3. **Agent 规划能力**
-   - 实现任务分解
-   - 依赖关系管理
+2. **✅ Lesson 2: Tools**（工具调用）
+   - 📄 `app/lesson/lesson2-tools/`
 
-4. **工具生态系统**
-   - 动态工具注册
-   - 工具组合
+3. **✅ Lesson 3: Agent**（自主决策）
+   - 📄 `app/lesson/lesson3-agent/`
 
-5. **评估与反思**
-   - 自我评估
-   - 策略调整
+4. **✅ 记忆增强 Agent**
+   - 实现短期/长期/工作记忆
+   - 记忆检索与更新
+   - 📄 `app/lesson/memory-agent/ANALYSIS.md`
 
-6. **生产级特性**
-   - 可观测性
-   - 可靠性
-   - 安全性
+5. **✅ 多 Agent 协作**
+   - 直接通信版：`app/lesson/multi-agent/`
+   - 消息队列版：`app/lesson/multi-agent-queue/`
+   - 📄 `app/lesson/multi-agent/MULTI_AGENT_ANALYSIS.md`
+
+**下一步：**
+
+6. **🎯 RAG (检索增强生成)** - 推荐优先学习
+   - 向量数据库集成
+   - Embedding 与语义搜索
+   - 知识库构建
+
+7. **Agent 工作流编排**（LangGraph）
+   - 状态机与条件分支
+   - 循环与递归
+   - 人工介入点
+
+8. **Agent 可观测性**（LangSmith）
+   - 追踪与调试
+   - 性能监控
+   - 成本控制
 
 ---
 
