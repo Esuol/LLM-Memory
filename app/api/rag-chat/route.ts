@@ -13,6 +13,21 @@ const documents = [
   "Astro 3.0 支持视图过渡动画和图片优化",
 ];
 
+// ==================== 缓存文档 Embedding ====================
+
+let documentEmbeddings: number[][] | null = null;
+
+async function initDocumentEmbeddings() {
+  if (!documentEmbeddings) {
+    console.log("初始化文档 Embedding...");
+    documentEmbeddings = await Promise.all(
+      documents.map((doc) => getEmbedding(doc))
+    );
+    console.log("文档 Embedding 缓存完成");
+  }
+  return documentEmbeddings;
+}
+
 // ==================== 真实 Embedding API ====================
 
 async function getEmbedding(text: string): Promise<number[]> {
@@ -47,14 +62,13 @@ function cosineSimilarity(a: number[], b: number[]): number {
 // ==================== 检索 ====================
 
 async function retrieve(query: string, topK = 2): Promise<string[]> {
+  const docEmbeddings = await initDocumentEmbeddings();
   const queryEmbedding = await getEmbedding(query);
 
-  const scores = await Promise.all(
-    documents.map(async (doc) => ({
-      doc,
-      score: cosineSimilarity(queryEmbedding, await getEmbedding(doc)),
-    }))
-  );
+  const scores = documents.map((doc, i) => ({
+    doc,
+    score: cosineSimilarity(queryEmbedding, docEmbeddings[i]),
+  }));
 
   scores.sort((a, b) => b.score - a.score);
   return scores.slice(0, topK).map((s) => s.doc);
