@@ -44,6 +44,11 @@ export default function Home() {
               多 Agent 协作 (消息队列版)
             </Link>
           </li>
+          <li>
+            <Link href="/lesson/lesson4-rag" className="text-blue-600 hover:underline">
+              Lesson 4: RAG (检索增强生成)
+            </Link>
+          </li>
         </ul>
       </section>
 
