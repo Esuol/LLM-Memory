@@ -118,6 +118,22 @@ async function initVectorDB() {
   return index;
 }
 
+// ==================== 关键词匹配 ====================
+
+function keywordScore(query: string, text: string): number {
+  const queryWords = query.toLowerCase().split(/\s+/);
+  const textLower = text.toLowerCase();
+
+  let matches = 0;
+  for (const word of queryWords) {
+    if (textLower.includes(word)) {
+      matches++;
+    }
+  }
+
+  return matches / queryWords.length;
+}
+
 // ==================== 检索 ====================
 
 async function retrieve(query: string, topK = 2): Promise<string[]> {
@@ -125,14 +141,31 @@ async function retrieve(query: string, topK = 2): Promise<string[]> {
 
   const queryEmbedding = await getEmbedding(query);
 
+  // 1. 向量搜索（取 topK * 2 作为候选）
   const results = await index.query({
     vector: queryEmbedding,
-    topK,
+    topK: topK * 2,
     includeMetadata: true,
   });
 
+  // 2. 混合评分：70% 语义 + 30% 关键词
+  const hybridScores = results.matches?.map((match) => {
+    const text = match.metadata?.text as string;
+    const vectorScore = match.score || 0;
+    const kwScore = keywordScore(query, text);
 
-  return results.matches?.map((match) => match.metadata?.text as string) || [];
+    return {
+      text,
+      score: 0.7 * vectorScore + 0.3 * kwScore,
+    };
+  }) || [];
+
+  // 3. 重新排序
+  hybridScores.sort((a, b) => b.score - a.score);
+
+  console.log('hybridScores', hybridScores);
+
+  return hybridScores.slice(0, topK).map((s) => s.text);
 }
 
 // ==================== API ====================
@@ -144,7 +177,6 @@ export async function POST(req: NextRequest) {
   const relevantDocs = await retrieve(question);
 
   const context = relevantDocs.join("\n");
-  console.log('relevantDocs', relevantDocs);
 
   // 2. 构建 Prompt
   const prompt = `基于以下上下文回答问题：
