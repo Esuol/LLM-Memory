@@ -17,7 +17,7 @@ const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
     // - https://github.com/:owner/:repo
     // - https://github.com/:owner/:repo.git
     const match = cleaned.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-    if (!match) return null;
+      if (!match) return null;
 
     const owner = match[1];
     const repo = match[2].replace(/\.git$/, "");
@@ -269,7 +269,11 @@ export async function indexRepository(repoUrl: string): Promise<{
   });
 
   // 写入 Pinecone：分批 embedding → upsert（避免一次性并发过高触发 rate limit）
-  type VectorRecord = { id: string; values: number[]; metadata: Record<string, string | number | boolean> };
+  type VectorRecord = {
+    id: string;
+    values: number[];
+    metadata: Record<string, string | number | boolean>;
+  };
   // 说明：创建 VectorRecord 对象
   const vectors: VectorRecord[] = [];
   // 说明：batchSize 为 50
@@ -287,7 +291,11 @@ export async function indexRepository(repoUrl: string): Promise<{
             id: `${namespace}-${i + j}`,
             // 说明：使用 embeddings.embedQuery 创建 values
             values: await embeddings.embedQuery(d.pageContent),
-            metadata: d.metadata as Record<string, string | number | boolean>,
+            // 保存 chunk 原文，供后续检索 sources 展示
+            metadata: {
+              ...(d.metadata as Record<string, string | number | boolean>),
+              content: d.pageContent,
+            },
           };
         } catch {
           return null;

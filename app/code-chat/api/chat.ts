@@ -1,0 +1,183 @@
+import { Pinecone } from "@pinecone-database/pinecone";
+import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
+import { Document } from "@langchain/core/documents";
+
+// 说明：定义 ChatHistoryPair 类型
+type ChatHistoryPair = { user: string; ai: string };
+
+// 说明：定义 SourceItem 类型
+type SourceItem = {
+  file: string;
+  language: string;
+  content: string;
+};
+
+// 说明：定义 PineconeMetadata 类型
+type PineconeMetadata = Record<string, string | number | boolean> & {
+  file?: string;
+  language?: string;
+  content?: string;
+};
+
+/**
+ * @description 从 Pinecone 中检索相关文档
+ * @param opts { pinecone: Pinecone, indexName: string, namespace: string, embeddings: OpenAIEmbeddings, query: string, k: number } 检索选项  pinecone: Pinecone 实例, indexName: 索引名称, namespace: 命名空间, embeddings: 嵌入模型, query: 查询问题, k: 检索结果数量
+ * @returns 检索结果
+ */
+async function retrieveFromPinecone(opts: {
+  pinecone: Pinecone;
+  indexName: string;
+  namespace: string;
+  embeddings: OpenAIEmbeddings;
+  query: string;
+  k: number;
+}): Promise<Document[]> {
+  // 说明：使用嵌入模型查询问题
+  const vector = await opts.embeddings.embedQuery(opts.query);
+  // 获取 Pinecone 索引
+  const index = opts.pinecone.Index(opts.indexName).namespace(opts.namespace);
+  // 使用 Pinecone 查询问题
+  const results = await index.query({
+    vector,
+    topK: opts.k,
+    includeMetadata: true,
+  });
+
+  // 说明：将检索结果转换为 Document 对象
+  const docs =
+    results.matches?.map((m) => {
+      // 说明：将检索结果转换为 PineconeMetadata 对象
+      const md = (m.metadata || {}) as PineconeMetadata;
+      // 说明：将检索结果转换为内容
+      const content = typeof md.content === "string" ? md.content : "";
+      // 说明：将检索结果转换为 Document 对象
+      return new Document({
+        pageContent: content,
+        metadata: md,
+      });
+    }) ?? [];
+
+  return docs.filter((d) => d.pageContent.trim().length > 0);
+}
+
+/**
+ * @description 去重来源文档
+ * @param sourceDocs 来源文档
+ * @returns 去重后的来源文档
+ */
+function dedupeSources(sourceDocs: Document[]): SourceItem[] {
+  // 说明：创建一个 Set 对象
+  const seen = new Set<string>();
+  // 说明：创建一个 SourceItem 对象
+  const sources: SourceItem[] = [];
+
+  for (const doc of sourceDocs) {
+    const md = (doc.metadata ?? {}) as PineconeMetadata;
+    const file = typeof md.file === "string" ? md.file : "";
+    const language = typeof md.language === "string" ? md.language : "text";
+    if (!file) continue;
+    if (seen.has(file)) continue;
+    seen.add(file);
+
+    // 说明：将检索结果转换为 SourceItem 对象
+    sources.push({
+      file,
+      language,
+      content: doc.pageContent.slice(0, 500),
+    });
+  }
+
+  return sources;
+}
+
+/**
+ * @description Query Condensation：把“历史对话 + 当前问题”改写成不依赖上下文的独立问题。
+ * @param llm LLM 实例
+ * @param question 当前问题
+ * @param history 对话历史（user/ai 对）
+ * @returns 独立问题（standalone question）
+ */
+export async function condenseQuestion(llm: ChatOpenAI, question: string, history: ChatHistoryPair[]): Promise<string> {
+  const condensed = await llm.invoke([
+    {
+      role: "system",
+      content:
+        "你是一个问句改写助手。根据对话历史，把用户的当前问题改写成不依赖上下文的独立问题。只输出改写后的问题，不要解释。",
+    },
+    {
+      role: "user",
+      content: `对话历史：\n${history.map((h, i) => `${i + 1}. 用户：${h.user}\n   助手：${h.ai}`).join("\n")}\n\n当前问题：${question}\n\n独立问题：`,
+    },
+  ]);
+
+  const condensedText = typeof condensed.content === "string" ? condensed.content : "";
+  return condensedText.trim() || question;
+}
+
+/**
+ * @description 基于指定仓库（namespace）的向量库进行带对话历史的 RAG 问答，并返回来源信息。
+ * @param question 用户问题
+ * @param namespace Pinecone namespace（建议用 owner-repo）
+ * @param history 对话历史（user/ai 对）
+ * @returns { answer: string; sources: Array<{ file: string; language: string; content: string }> }
+ */
+export async function chatWithRepo(question: string, namespace: string, history: ChatHistoryPair[]) {
+  const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "rag-demo";
+
+  // 说明：创建嵌入模型实例
+  const embeddings = new OpenAIEmbeddings({
+    // 说明：使用 text-embedding-3-small 模型
+    model: "text-embedding-3-small",
+    // 说明：使用 OPENAI_API_KEY
+    apiKey: process.env.OPENAI_API_KEY,
+    // 说明：使用 OPENAI_BASE_URL
+    configuration: process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : undefined,
+  });
+
+  // 说明：创建 LLM 实例
+  const llm = new ChatOpenAI({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    apiKey: process.env.OPENAI_API_KEY,
+    configuration: process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : undefined,
+  });
+
+  // 1) Query condensation：history 为空时直接跳过（省一次 LLM 调用）
+  const standaloneQuestion = history.length === 0 ? question : await condenseQuestion(llm, question, history);
+
+  // 2) RAG 检索
+  // 说明：从 Pinecone 中检索相关文档
+  const sourceDocuments = await retrieveFromPinecone({
+    pinecone,
+    indexName,
+    namespace,
+    embeddings,
+    query: standaloneQuestion,
+    k: 5,
+  });
+
+  // 3) 用检索结果生成最终回答
+  // 说明：将检索结果转换为内容
+  const context = sourceDocuments.map((d) => d.pageContent).join("\n\n---\n\n");
+  // 说明：使用 LLM 生成回答
+  const answerMsg = await llm.invoke([
+    {
+      role: "system",
+      content: "你是代码库问答助手。只基于给定上下文回答；如果上下文不足以回答，就明确说不知道，并说明缺少什么信息。",
+    },
+    {
+      role: "user",
+      content: `上下文：\n${context}\n\n问题：${standaloneQuestion}\n\n回答：`,
+    },
+  ]);
+
+  // 说明：将回答转换为文本
+  const answerText = typeof answerMsg.content === "string" ? answerMsg.content : "";
+  const answer = answerText.trim();
+  // 说明：去重来源文档
+  const sources = dedupeSources(sourceDocuments);
+
+  return { answer, sources };
+}
+

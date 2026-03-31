@@ -1,6 +1,6 @@
 ## 知识点记录
 
-⏺ Step 2：拉取 GitHub 文件列表
+### Step 2：拉取 GitHub 文件列表
 
   【知识点】
 
@@ -9,18 +9,20 @@
   GET https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1
 
   返回的数据结构：
-  {
-    "tree": [
-      { "path": "src/app/page.tsx", "type": "blob", "size": 2048 },
-      { "path": "src/app",         "type": "tree"              },
-      { "path": ".gitignore",      "type": "blob", "size": 312  }
-    ]
-  }
+  ```ts
+    {
+      "tree": [
+        { "path": "src/app/page.tsx", "type": "blob", "size": 2048 },
+        { "path": "src/app",         "type": "tree"              },
+        { "path": ".gitignore",      "type": "blob", "size": 312  }
+      ]
+    }
+  ```
 
   - type: "blob" = 文件
   - type: "tree" = 目录（不需要）
 
-⏺ Step 3：批量拉取文件内容
+### Step 3：批量拉取文件内容
 
   【知识点】
 
@@ -38,7 +40,7 @@
   → 第 2 批：同时请求 10 个（并发）
   → ...共 9 批
 
-Step 4：文档分块 + 写入 Pinecone
+### Step 4：文档分块 + 写入 Pinecone
 
   【知识点】
 
@@ -48,6 +50,7 @@ Step 4：文档分块 + 写入 Pinecone
 
   你已经在 Lesson 4 学过。这次用 LangChain 的
   RecursiveCharacterTextSplitter，它比手写的更聪明——会优先在自然边界（换行、空格）切割：
+  ```ts
 
   import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 
@@ -61,9 +64,11 @@ Step 4：文档分块 + 写入 Pinecone
     [fileContent],                          // 文本内容
     [{ file: "src/app/page.tsx", language: "typescript" }]  // metadata
   );
+  ```
 
   2. 写入 Pinecone（LangChain 方式）
 
+  ```ts
   import { PineconeVectorStore } from "@langchain/pinecone";
   import { OpenAIEmbeddings } from "@langchain/openai";
 
@@ -71,6 +76,55 @@ Step 4：文档分块 + 写入 Pinecone
     pineconeIndex,
     namespace: "vercel-next-js",
   });
+  ```
 
   fromDocuments 内部自动完成：embedding → upsert，一步到位。
+
+
+### Step 5：实现 chat.ts
+
+  【知识点】这一步要用 ConversationalRetrievalQAChain，它做了两件事：
+  1. Query Condensation：把历史对话 + 当前问题，先让 LLM 生成一个"独立问题"（解决代词指代）
+  2. RAG 问答：用独立问题检索 Pinecone，再让 LLM 生成最终回答
+
+【示例代码】
+
+ ```ts
+ import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
+  import { PineconeVectorStore } from "@langchain/pinecone";
+  import { ConversationalRetrievalQAChain } from "langchain/chains";
+  import { Pinecone } from "@pinecone-database/pinecone";
+
+  const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
+
+  export async function chatWithRepo(
+    question: string,
+    namespace: string,
+    history: Array<{ user: string; ai: string }>
+  ) {
+    const embeddings = new OpenAIEmbeddings({ model: "text-embedding-3-small" });
+    const pineconeIndex = pinecone.Index(process.env.PINECONE_INDEX_NAME || "rag-demo");
+
+    const vectorStore = await PineconeVectorStore.fromExistingIndex(embeddings, {
+      pineconeIndex,
+      namespace,
+    });
+
+    const llm = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0 });
+    const chain = ConversationalRetrievalQAChain.fromLLM(llm, vectorStore.asRetriever({ k: 5 }), {
+      returnSourceDocuments: true,
+    });
+
+    const result = await chain.invoke({
+      question,
+      chat_history: history.map(h => [h.user, h.ai]),
+    });
+
+    return {
+      answer: result.text,
+      sources: result.sourceDocuments,
+    };
+  }
+  ```
+
 
