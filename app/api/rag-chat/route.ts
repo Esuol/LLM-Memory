@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Pinecone } from "@pinecone-database/pinecone";
 
 // ==================== 知识库 ====================
 
@@ -9,6 +10,12 @@ const rawDocuments = [
 
   `Tailwind CSS v4 使用 Rust 引擎，编译速度提升 10 倍。新版本完全重写了编译器，采用 Rust 语言实现，大幅提升了构建性能。支持原生 CSS 变量，移除了对 PostCSS 的依赖。新增了容器查询、动态视口单位等现代 CSS 特性。配置文件也简化了，提供了更好的 TypeScript 支持。`,
 ];
+
+const pinecone = new Pinecone({
+  apiKey: process.env.PINECONE_API_KEY!,
+});
+
+const indexName = "rag-demo";
 
 // ==================== 文档切分 ====================
 
@@ -49,24 +56,7 @@ function createChunks(docs: string[]): Chunk[] {
   return allChunks;
 }
 
-const documentChunks = createChunks(rawDocuments);
-
-// ==================== 缓存文档 Embedding ====================
-
-let chunkEmbeddings: number[][] | null = null;
-
-async function initChunkEmbeddings() {
-  if (!chunkEmbeddings) {
-    console.log(`初始化 ${documentChunks.length} 个文档块的 Embedding...`);
-    chunkEmbeddings = await Promise.all(
-      documentChunks.map((chunk) => getEmbedding(chunk.content))
-    );
-    console.log("文档块 Embedding 缓存完成");
-  }
-  return chunkEmbeddings;
-}
-
-// ==================== 真实 Embedding API ====================
+// ==================== Embedding API ====================
 
 async function getEmbedding(text: string): Promise<number[]> {
   const response = await fetch(
@@ -88,28 +78,61 @@ async function getEmbedding(text: string): Promise<number[]> {
   return data.data[0].embedding;
 }
 
-// ==================== 余弦相似度 ====================
+// ==================== 向量数据库初始化 ====================
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
-  const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
-  const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
-  return dotProduct / (magnitudeA * magnitudeB);
+async function initVectorDB() {
+  const index = pinecone.Index(indexName);
+
+  const stats = await index.describeIndexStats();
+  if (stats.totalRecordCount === 0) {
+    console.log("初始化 Pinecone...");
+    const chunks = createChunks(rawDocuments);
+    if (chunks.length === 0) {
+      console.warn("[RAG] createChunks 结果为空，跳过 upsert。");
+      return index;
+    }
+
+    const vectors = await Promise.all(
+      chunks.map(async (chunk, i) => ({
+        id: `chunk_${i}`,
+        values: await getEmbedding(chunk.content),
+        metadata: { text: chunk.content, ...chunk.metadata },
+      }))
+    );
+
+    // 避免空 upsert：Pinecone 要求至少 1 条 record
+    const validVectors = vectors.filter(
+      (v) => Array.isArray(v.values) && v.values.length > 0 && typeof v.id === "string"
+    );
+    if (validVectors.length === 0) {
+      console.warn(
+        "[RAG] embedding 得到的 vectors 为空，跳过 upsert。可能原因：缺少 PINECONE_API_KEY / OPENAI_API_KEY，或 embedding 返回格式异常。"
+      );
+      return index;
+    }
+
+    await index.upsert({ records: validVectors });
+    console.log(`已添加 ${chunks.length} 个文档块`);
+  }
+
+  return index;
 }
 
 // ==================== 检索 ====================
 
 async function retrieve(query: string, topK = 2): Promise<string[]> {
-  const docEmbeddings = await initChunkEmbeddings();
+  const index = await initVectorDB();
+
   const queryEmbedding = await getEmbedding(query);
 
-  const scores = documentChunks.map((chunk, i) => ({
-    doc: chunk.content,
-    score: cosineSimilarity(queryEmbedding, docEmbeddings[i]),
-  }));
+  const results = await index.query({
+    vector: queryEmbedding,
+    topK,
+    includeMetadata: true,
+  });
 
-  scores.sort((a, b) => b.score - a.score);
-  return scores.slice(0, topK).map((s) => s.doc);
+
+  return results.matches?.map((match) => match.metadata?.text as string) || [];
 }
 
 // ==================== API ====================
