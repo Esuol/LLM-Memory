@@ -5,6 +5,31 @@ import { SKIP_PATHS, SUPPORTED_EXTENSIONS } from "./constant";
 
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 
+type PineconeMetadataValue = string | number | boolean | string[];
+
+/**
+ * @description 将任意 metadata 清洗成 Pinecone 可接受的扁平结构（只保留 string/number/boolean/string[]）。
+ * 例如 LangChain Document 可能带有 `loc` 这类对象字段，需要移除或转成字符串。
+ */
+export function sanitizePineconeMetadata(input: unknown): Record<string, PineconeMetadataValue> {
+  if (typeof input !== "object" || input === null) return {};
+  const obj = input as Record<string, unknown>;
+
+  const out: Record<string, PineconeMetadataValue> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+      out[k] = v;
+      continue;
+    }
+    if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
+      out[k] = v;
+      continue;
+    }
+    // 其他类型（object/null/array<number>/etc.）都跳过，避免 Pinecone 报错，例如 loc
+  }
+  return out;
+}
+
   /**
    * @description 解析 GitHub 仓库 URL
    * @param url GitHub 仓库 URL
@@ -110,6 +135,8 @@ const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
         .filter((f) => f.size < 100 * 1024)
         .slice(0, 200) ?? [];
 
+    // 说明：返回文件列表
+    console.log("files", files);
     return files;
   }
 
@@ -272,7 +299,7 @@ export async function indexRepository(repoUrl: string): Promise<{
   type VectorRecord = {
     id: string;
     values: number[];
-    metadata: Record<string, string | number | boolean>;
+    metadata: Record<string, PineconeMetadataValue>;
   };
   // 说明：创建 VectorRecord 对象
   const vectors: VectorRecord[] = [];
@@ -293,7 +320,7 @@ export async function indexRepository(repoUrl: string): Promise<{
             values: await embeddings.embedQuery(d.pageContent),
             // 保存 chunk 原文，供后续检索 sources 展示
             metadata: {
-              ...(d.metadata as Record<string, string | number | boolean>),
+              ...sanitizePineconeMetadata(d.metadata),
               content: d.pageContent,
             },
           };
@@ -331,6 +358,21 @@ export async function indexRepository(repoUrl: string): Promise<{
   };
 }
 
+
+/**
+ * @description 列出 Pinecone 中所有已索引的 namespace
+ */
+export async function listNamespaces(): Promise<Array<{ namespace: string; vectorCount: number }>> {
+  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "rag-demo";
+  const pineconeIndex = pinecone.Index(indexName);
+  const stats = (await pineconeIndex.describeIndexStats()) as unknown as {
+    namespaces?: Record<string, { recordCount?: number; vectorCount?: number }>;
+  };
+  return Object.entries(stats.namespaces ?? {}).map(([namespace, info]) => ({
+    namespace,
+    vectorCount: info.recordCount ?? info.vectorCount ?? 0,
+  }));
+}
 
 /**
  * @description 语言识别提示，你需要一个辅助函数

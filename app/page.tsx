@@ -55,9 +55,11 @@ export default function Home() {
       <section>
         <h2 className="text-2xl font-semibold mb-4">项目</h2>
         <ul className="space-y-2">
-          <li className="text-gray-400">Project 1: Memory Chat</li>
-          <li className="text-gray-400">Project 2: Tool Agent</li>
-          <li className="text-gray-400">Project 3: AI Assistant</li>
+          <li>
+            <Link href="/code-chat" className="text-blue-600 hover:underline">
+              代码库问答助手（输入 GitHub 仓库地址，自然语言问答）
+            </Link>
+          </li>
         </ul>
       </section>
     </main>

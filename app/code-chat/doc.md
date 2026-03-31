@@ -127,4 +127,28 @@
   }
   ```
 
+### 继续 Step 6，app/api/code-chat/route.ts 还是空文件，这一步需要你来写。任务很简单：
+
+```ts
+import { NextRequest, NextResponse } from "next/server";
+import { indexRepository } from "@/app/code-chat/api/index";
+import { chatWithRepo } from "@/app/code-chat/api/chat";
+
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+
+  if (body.type === "index") {
+    // 调用 indexRepository，try/catch，成功返回 { success: true, ...result }
+    // 失败返回 { error: message }，状态码 500
+  }
+
+  if (body.type === "chat") {
+    // 调用 chatWithRepo，try/catch
+    // 失败返回 { error: message }，状态码 500
+  }
+
+  return NextResponse.json({ error: "unknown type" }, { status: 400 });
+}
+```
+
 
