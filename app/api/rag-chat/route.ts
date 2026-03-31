@@ -134,14 +134,42 @@ function keywordScore(query: string, text: string): number {
   return matches / queryWords.length;
 }
 
+// ==================== HyDE ====================
+
+async function generateHypotheticalAnswer(query: string): Promise<string> {
+  const response = await fetch(
+    `${process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: `假设你知道答案，请简洁回答（100字以内）：\n\n${query}` }],
+        temperature: 0.3,
+      }),
+    }
+  );
+
+  const data = await response.json();
+  return data.choices[0].message.content.trim();
+}
+
 // ==================== 检索 ====================
 
 async function retrieve(query: string, topK = 2): Promise<string[]> {
   const index = await initVectorDB();
 
-  const queryEmbedding = await getEmbedding(query);
+  // 1. 生成假设性答案
+  const hypotheticalAnswer = await generateHypotheticalAnswer(query);
+  console.log('HyDE answer:', hypotheticalAnswer);
 
-  // 1. 向量搜索（取 topK * 2 作为候选）
+  // 2. 用假设性答案的 embedding 检索
+  const queryEmbedding = await getEmbedding(hypotheticalAnswer);
+
+  // 3. 向量搜索（取 topK * 2 作为候选）
   const results = await index.query({
     vector: queryEmbedding,
     topK: topK * 2,
