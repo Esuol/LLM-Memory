@@ -10,6 +10,9 @@ type PineconeMetadataValue = string | number | boolean | string[];
 /**
  * @description 将任意 metadata 清洗成 Pinecone 可接受的扁平结构（只保留 string/number/boolean/string[]）。
  * 例如 LangChain Document 可能带有 `loc` 这类对象字段，需要移除或转成字符串。
+ * @returns Record<string, PineconeMetadataValue>
+ * @example
+ * sanitizePineconeMetadata({ file: 'src/app/page.tsx', language: 'typescript', repo: 'vercel/next.js' }) => { file: 'src/app/page.tsx', language: 'typescript', repo: 'vercel/next.js' }
  */
 export function sanitizePineconeMetadata(input: unknown): Record<string, PineconeMetadataValue> {
   if (typeof input !== "object" || input === null) return {};
@@ -77,7 +80,6 @@ export function sanitizePineconeMetadata(input: unknown): Record<string, Pinecon
     const parts = path.split("/");
     return SKIP_PATHS.some(skip => parts.includes(skip));
   }
-
 
 
   /**
@@ -309,28 +311,23 @@ export async function indexRepository(repoUrl: string): Promise<{
   for (let i = 0; i < docs.length; i += batchSize) {
     // 说明：按 batchSize 切片
     const batch = docs.slice(i, i + batchSize);
-    // 说明：用 Promise.all 并发处理 batch
-    const batchVectors: Array<VectorRecord | null> = await Promise.all(
-      // 说明：用 map 并发处理 batch
-      batch.map(async (d, j) => {
-        try {
-          return {
-            id: `${namespace}-${i + j}`,
-            // 说明：使用 embeddings.embedQuery 创建 values
-            values: await embeddings.embedQuery(d.pageContent),
-            // 保存 chunk 原文，供后续检索 sources 展示
-            metadata: {
-              ...sanitizePineconeMetadata(d.metadata),
-              content: d.pageContent,
-            },
-          };
-        } catch {
-          return null;
-        }
-      })
-    );
-    // 说明：将所有 VectorRecord 对象扁平化
-    vectors.push(...batchVectors.filter((v): v is VectorRecord => v !== null));
+    // 说明：一次批量 embedding（单次 HTTP 请求返回整批向量）
+    try {
+      const texts = batch.map((d) => d.pageContent);
+      const allValues = await embeddings.embedDocuments(texts);
+      const batchVectors: VectorRecord[] = allValues.map((values, j) => ({
+        id: `${namespace}-${i + j}`,
+        values,
+        metadata: {
+          ...sanitizePineconeMetadata(batch[j].metadata),
+          content: batch[j].pageContent,
+        },
+      }));
+      vectors.push(...batchVectors);
+    } catch {
+      console.warn(`[CodeChat][embed] Batch ${i}-${i + batch.length - 1} failed, skipping`);
+      // 跳过本批，继续后续批次
+    }
   }
 
   // 说明：如果 vectors 为空，直接返回
@@ -361,13 +358,19 @@ export async function indexRepository(repoUrl: string): Promise<{
 
 /**
  * @description 列出 Pinecone 中所有已索引的 namespace
+ * @returns Array<{ namespace: string; vectorCount: number }>
+ * @example
+ * listNamespaces() => [{ namespace: "vercel-next-js", vectorCount: 100 }]
  */
 export async function listNamespaces(): Promise<Array<{ namespace: string; vectorCount: number }>> {
-  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "rag-demo";
+  // 说明：获取 Pinecone index
+  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || 'code-search';
   const pineconeIndex = pinecone.Index(indexName);
+  // 说明：获取 Pinecone namespace 统计信息
   const stats = (await pineconeIndex.describeIndexStats()) as unknown as {
     namespaces?: Record<string, { recordCount?: number; vectorCount?: number }>;
   };
+  // 说明：将 Pinecone namespace 统计信息转换为 Array<{ namespace: string; vectorCount: number }>
   return Object.entries(stats.namespaces ?? {}).map(([namespace, info]) => ({
     namespace,
     vectorCount: info.recordCount ?? info.vectorCount ?? 0,

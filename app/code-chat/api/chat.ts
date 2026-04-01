@@ -123,7 +123,7 @@ export async function condenseQuestion(llm: ChatOpenAI, question: string, histor
  */
 export async function chatWithRepo(question: string, namespace: string, history: ChatHistoryPair[]) {
   const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
-  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "rag-demo";
+  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "code-search";
 
   // 说明：创建嵌入模型实例
   const embeddings = new OpenAIEmbeddings({
@@ -160,6 +160,7 @@ export async function chatWithRepo(question: string, namespace: string, history:
   // 3) 用检索结果生成最终回答
   // 说明：将检索结果转换为内容
   const context = sourceDocuments.map((d) => d.pageContent).join("\n\n---\n\n");
+  console.log('standaloneQuestion', standaloneQuestion);
   // 说明：使用 LLM 生成回答
   const answerMsg = await llm.invoke([
     {

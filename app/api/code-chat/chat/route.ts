@@ -21,6 +21,7 @@ function isHistoryArray(v: unknown): v is Array<{ user: string; ai: string }> {
 export async function POST(req: NextRequest) {
   try {
     const body: unknown = await req.json();
+    console.log('bbbb', body)
     if (!isRecord(body)) return NextResponse.json({ error: "invalid body" }, { status: 400 });
 
     const namespace = typeof body.namespace === "string" ? body.namespace.trim() : "";
