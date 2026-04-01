@@ -119,9 +119,18 @@ export async function condenseQuestion(llm: ChatOpenAI, question: string, histor
  * @param question 用户问题
  * @param namespace Pinecone namespace（建议用 owner-repo）
  * @param history 对话历史（user/ai 对）
+ * @param opts 可选回调：onChunk(token) 用于流式输出；onSources(sources) 用于一次性返回来源
  * @returns { answer: string; sources: Array<{ file: string; language: string; content: string }> }
  */
-export async function chatWithRepo(question: string, namespace: string, history: ChatHistoryPair[]) {
+export async function chatWithRepo(
+  question: string,
+  namespace: string,
+  history: ChatHistoryPair[],
+  opts?: {
+    onChunk?: (token: string) => void;
+    onSources?: (sources: SourceItem[]) => void;
+  }
+) {
   const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
   const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "code-search";
 
@@ -160,9 +169,12 @@ export async function chatWithRepo(question: string, namespace: string, history:
   // 3) 用检索结果生成最终回答
   // 说明：将检索结果转换为内容
   const context = sourceDocuments.map((d) => d.pageContent).join("\n\n---\n\n");
-  console.log('standaloneQuestion', standaloneQuestion);
-  // 说明：使用 LLM 生成回答
-  const answerMsg = await llm.invoke([
+
+  const sources = dedupeSources(sourceDocuments);
+  opts?.onSources?.(sources);
+
+  // 说明：使用 LLM 生成回答（支持流式回调）
+  const answerStream = await llm.stream([
     {
       role: "system",
       content: "你是代码库问答助手。只基于给定上下文回答；如果上下文不足以回答，就明确说不知道，并说明缺少什么信息。",
@@ -173,11 +185,17 @@ export async function chatWithRepo(question: string, namespace: string, history:
     },
   ]);
 
-  // 说明：将回答转换为文本
-  const answerText = typeof answerMsg.content === "string" ? answerMsg.content : "";
-  const answer = answerText.trim();
-  // 说明：去重来源文档
-  const sources = dedupeSources(sourceDocuments);
+  let answer = "";
+  for await (const chunk of answerStream) {
+    // chunk.content 可能是 string 或复杂结构，这里只处理 string
+    const content = (typeof chunk === "object" && chunk !== null && "content" in chunk)
+      ? (chunk as { content?: unknown }).content
+      : undefined;
+    const token = typeof content === "string" ? content : "";
+    if (!token) continue;
+    answer += token;
+    opts?.onChunk?.(token);
+  }
 
   return { answer, sources };
 }

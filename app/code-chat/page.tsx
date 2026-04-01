@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { flushSync } from "react-dom";
 
 type Phase = "input" | "indexing" | "chat";
 
@@ -181,14 +182,80 @@ export default function CodeChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q, namespace, history }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "问答失败");
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[updated.length - 1] = { user: q, ai: data.answer, sources: data.sources ?? [] };
-        return updated;
-      });
-      setCurrentSources(data.sources ?? []);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || "问答失败");
+      }
+      if (!res.body) throw new Error("问答失败：无响应流");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          const line = part
+            .split("\n")
+            .map((l) => l.trim())
+            .find((l) => l.startsWith("data:"));
+          if (!line) continue;
+
+          const payload = line.slice("data:".length).trim();
+          if (!payload) continue;
+
+          const evt = (() => {
+            try {
+              return JSON.parse(payload) as
+                | { type: "chunk"; token: string }
+                | { type: "sources"; sources: Source[] }
+                | { type: "done" }
+                | { type: "error"; message: string };
+            } catch {
+              return null;
+            }
+          })();
+          if (!evt) continue;
+
+          switch (evt.type) {
+            case "chunk": {
+              flushSync(() => {
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  updated[updated.length - 1] = { ...last, ai: (last.ai ?? "") + evt.token };
+                  return updated;
+                });
+              });
+              break;
+            }
+            case "sources": {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                updated[updated.length - 1] = { ...last, sources: evt.sources ?? [] };
+                return updated;
+              });
+              setCurrentSources(evt.sources ?? []);
+              break;
+            }
+            case "done": {
+              return;
+            }
+            case "error": {
+              throw new Error(evt.message || "问答失败");
+            }
+          }
+        }
+      }
+
+      throw new Error("问答失败：流已结束但未收到 done");
     } catch (err) {
       setMessages((prev) => {
         const updated = [...prev];
