@@ -1,6 +1,7 @@
 import { Pinecone } from "@pinecone-database/pinecone";
 import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
 import { Document } from "@langchain/core/documents";
+import { withRetry } from "./utils";
 
 // 说明：定义 ChatHistoryPair 类型
 type ChatHistoryPair = { user: string; ai: string };
@@ -33,7 +34,7 @@ async function retrieveFromPinecone(opts: {
   k: number;
 }): Promise<Document[]> {
   // 说明：使用嵌入模型查询问题
-  const vector = await opts.embeddings.embedQuery(opts.query);
+  const vector = await withRetry(() => opts.embeddings.embedQuery(opts.query), 2, 500);
   // 获取 Pinecone 索引
   const index = opts.pinecone.Index(opts.indexName).namespace(opts.namespace);
   // 使用 Pinecone 查询问题

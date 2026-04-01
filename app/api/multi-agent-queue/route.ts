@@ -97,32 +97,32 @@ class PlannerAgent {
   async handleMessage(msg: Message) {
     if (msg.type === "task") {
       try {
-        this.send({ type: "log", content: "[Planner] 收到用户请求，开始规划..." });
+      this.send({ type: "log", content: "[Planner] 收到用户请求，开始规划..." });
 
-        const response = await fetch(
-          `${process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/chat/completions`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            },
-            body: JSON.stringify({
-              model,
-              messages: [
-                {
-                  role: "system",
-                  content: `你是规划 Agent。将用户请求拆解为任务列表。
+      const response = await fetch(
+        `${process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              {
+                role: "system",
+                content: `你是规划 Agent。将用户请求拆解为任务列表。
 返回格式：{"tasks": [{"action": "getWeather", "args": {"city": "北京"}}, ...]}`,
-                },
-                { role: "user", content: msg.content },
-              ],
-              response_format: { type: "json_object" },
-            }),
-          }
-        );
+              },
+              { role: "user", content: msg.content },
+            ],
+            response_format: { type: "json_object" },
+          }),
+        }
+      );
 
-        const data = await response.json();
+      const data = await response.json();
         const content = data.choices?.[0]?.message?.content?.trim?.() ?? "";
         const parsed = safeParseJsonObject(content);
         const parsedTasks = parsed?.tasks;
@@ -132,25 +132,25 @@ class PlannerAgent {
           this.send({ type: "log", content: "[Planner] 模型未返回合法 JSON，已使用兜底任务策略" });
         }
 
-        this.send({ type: "log", content: `[Planner] 拆解为 ${tasks.length} 个任务，发送给 Worker` });
+      this.send({ type: "log", content: `[Planner] 拆解为 ${tasks.length} 个任务，发送给 Worker` });
 
-        // 发送任务到 Worker
-        tasks.forEach((task: any, i: number) => {
-          this.queue.send({
-            from: "planner",
-            to: "worker",
-            type: "task",
-            content: { id: `task-${i}`, ...task },
-          });
-        });
-
-        // 通知 Coordinator 任务数量
+      // 发送任务到 Worker
+      tasks.forEach((task: any, i: number) => {
         this.queue.send({
           from: "planner",
-          to: "coordinator",
+          to: "worker",
           type: "task",
-          content: { totalTasks: tasks.length, userRequest: msg.content },
+          content: { id: `task-${i}`, ...task },
         });
+      });
+
+      // 通知 Coordinator 任务数量
+      this.queue.send({
+        from: "planner",
+        to: "coordinator",
+        type: "task",
+        content: { totalTasks: tasks.length, userRequest: msg.content },
+      });
       } catch (error: any) {
         this.send({ type: "log", content: `[Planner] 规划失败，降级为 0 任务：${error.message}` });
         this.queue.send({

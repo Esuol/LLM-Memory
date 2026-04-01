@@ -2,6 +2,7 @@ import { Pinecone } from "@pinecone-database/pinecone";
 import { OpenAIEmbeddings } from "@langchain/openai";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { SKIP_PATHS, SUPPORTED_EXTENSIONS } from "./constant";
+import { withRetry } from "./utils";
 
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 
@@ -214,7 +215,11 @@ export async function fetchFilesInBatches(
 
     const batchResults = await Promise.all(
       batch.map(async (file) => {
-        const content = await fetchFileContent(owner, repo, file.path).catch(() => null);
+        const content = await withRetry(
+          () => fetchFileContent(owner, repo, file.path),
+          2,
+          500
+        ).catch(() => null);
         return { path: file.path, content };
       })
     );
@@ -344,7 +349,14 @@ export async function indexRepository(
     try {
       onProgress?.(`🔮 Embedding 第 ${Math.floor(i / batchSize) + 1}/${totalBatches} 批（${batch.length} 个）...`);
       const texts = batch.map((d) => d.pageContent);
-      const allValues = await embeddings.embedDocuments(texts);
+      const allValues = await withRetry(
+        () => embeddings.embedDocuments(texts),
+        3,
+        1000,
+        (attempt, delayMs) => {
+          onProgress?.(`⏳ Embedding 失败，第 ${attempt}/3 次重试，等待 ${Math.round(delayMs / 1000)}s...`);
+        }
+      );
       const batchVectors: VectorRecord[] = allValues.map((values, j) => ({
         id: `${namespace}-${i + j}`,
         values,
@@ -354,7 +366,7 @@ export async function indexRepository(
         },
       }));
       onProgress?.(`💾 写入 Pinecone 第 ${Math.floor(i / batchSize) + 1}/${totalBatches} 批（${batchVectors.length} 个）...`);
-      await pineconeNs.upsert({ records: batchVectors });
+      await withRetry(() => pineconeNs.upsert({ records: batchVectors }), 3, 500);
       chunkCount += batchVectors.length;
     } catch {
       onProgress?.(`⚠️ 第 ${Math.floor(i / batchSize) + 1}/${totalBatches} 批 Embedding 失败，已跳过`);
