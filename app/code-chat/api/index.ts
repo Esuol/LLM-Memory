@@ -375,6 +375,15 @@ export async function listNamespaces(): Promise<Array<{ namespace: string; vecto
 }
 
 /**
+ * @description 删除 Pinecone 中指定 namespace 的所有向量
+ */
+export async function deleteNamespace(namespace: string): Promise<void> {
+  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "rag-demo";
+  const pineconeIndex = pinecone.Index(indexName);
+  await pineconeIndex.namespace(namespace).deleteAll();
+}
+
+/**
  * @description 语言识别提示，你需要一个辅助函数
  * @param path 文件路径
  * @returns string

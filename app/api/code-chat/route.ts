@@ -1,102 +1,69 @@
 import { NextRequest, NextResponse } from "next/server";
-import { indexRepository, listNamespaces } from "@/app/code-chat/api/index";
-import { chatWithRepo } from "@/app/code-chat/api/chat";
-
-type ListBody = { type: "list" };
-
-type IndexBody = {
-  type: "index";
-  repoUrl: string;
-};
-
-type ChatBody = {
-  type: "chat";
-  namespace: string;
-  question: string;
-  history?: Array<{ user: string; ai: string }>;
-};
-
-type UnknownBody = Record<string, unknown>;
-
-function isRecord(v: unknown): v is UnknownBody {
-  return typeof v === "object" && v !== null;
-}
-
-function isListBody(v: unknown): v is ListBody {
-  return isRecord(v) && v.type === "list";
-}
-
-function isIndexBody(v: unknown): v is IndexBody {
-  return (
-    isRecord(v) &&
-    v.type === "index" &&
-    typeof v.repoUrl === "string"
-  );
-}
-
-function isChatBody(v: unknown): v is ChatBody {
-  return (
-    isRecord(v) &&
-    v.type === "chat" &&
-    typeof v.namespace === "string" &&
-    typeof v.question === "string"
-  );
-}
 
 /**
- * @description Code Chat API：支持索引仓库与基于仓库的对话检索问答。
+ * @description 兼容旧版 single-endpoint（body.type）调用方式。
+ * 建议迁移到：
+ * - GET  /api/code-chat/list
+ * - POST /api/code-chat/index
+ * - POST /api/code-chat/chat
+ * - POST /api/code-chat/delete
  */
 export async function POST(req: NextRequest) {
-  const body: unknown = await req.json();
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const type = typeof body.type === "string" ? body.type : "";
 
-  if (isListBody(body)) {
-    try {
-      const namespaces = await listNamespaces();
-      return NextResponse.json({ success: true, namespaces });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "list failed";
-      return NextResponse.json({ error: message }, { status: 500 });
-    }
+  if (type === "list") {
+    const url = new URL(req.url);
+    url.pathname = "/api/code-chat/list";
+    return NextResponse.redirect(url);
   }
 
-  // 说明：如果 body 是 IndexBody，则调用 indexRepository
-  if (isIndexBody(body)) {
-    try {
-      if (body.repoUrl.trim().length === 0) {
-        return NextResponse.json({ error: "repoUrl 不能为空" }, { status: 400 });
-      }
-      const result = await indexRepository(body.repoUrl.trim());
-      return NextResponse.json({ success: true, ...result });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "index failed";
-      return NextResponse.json({ error: message }, { status: 500 });
-    }
+  if (type === "index") {
+    const url = new URL(req.url);
+    url.pathname = "/api/code-chat/index";
+    const repoUrl = typeof body.repoUrl === "string" ? body.repoUrl : "";
+    const forward = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repoUrl }),
+    });
+    const json = await forward.json();
+    return NextResponse.json(json, { status: forward.status });
   }
 
-  // 说明：如果 body 是 ChatBody，则调用 chatWithRepo
-  if (isChatBody(body)) {
-    try {
-      if (body.namespace.trim().length === 0) {
-        return NextResponse.json({ error: "namespace 不能为空" }, { status: 400 });
-      }
-      if (body.question.trim().length === 0) {
-        return NextResponse.json({ error: "question 不能为空" }, { status: 400 });
-      }
-
-      const history =
-        Array.isArray(body.history) &&
-        body.history.every(
-          (h) => isRecord(h) && typeof h.user === "string" && typeof h.ai === "string"
-        )
-          ? body.history
-          : [];
-      const result = await chatWithRepo(body.question.trim(), body.namespace.trim(), history);
-      return NextResponse.json({ success: true, ...result });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "chat failed";
-      return NextResponse.json({ error: message }, { status: 500 });
-    }
+  if (type === "chat") {
+    const url = new URL(req.url);
+    url.pathname = "/api/code-chat/chat";
+    const namespace = typeof body.namespace === "string" ? body.namespace : "";
+    const question = typeof body.question === "string" ? body.question : "";
+    const history = Array.isArray(body.history) ? body.history : [];
+    const forward = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ namespace, question, history }),
+    });
+    const json = await forward.json();
+    return NextResponse.json(json, { status: forward.status });
   }
 
-  return NextResponse.json({ error: "unknown type" }, { status: 400 });
+  if (type === "delete") {
+    const url = new URL(req.url);
+    url.pathname = "/api/code-chat/delete";
+    const namespace = typeof body.namespace === "string" ? body.namespace : "";
+    const forward = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ namespace }),
+    });
+    const json = await forward.json();
+    return NextResponse.json(json, { status: forward.status });
+  }
+
+  return NextResponse.json(
+    {
+      error:
+        'deprecated endpoint: please use /api/code-chat/{list|index|chat|delete}',
+    },
+    { status: 400 }
+  );
 }

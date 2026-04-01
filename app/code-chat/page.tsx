@@ -1,3 +1,4 @@
+/* eslint-disable react/jsx-no-comment-textnodes */
 "use client";
 
 import { useState, useRef, useEffect } from "react";
@@ -46,34 +47,63 @@ export default function CodeChatPage() {
   const [existingNamespaces, setExistingNamespaces] = useState<
     Array<{ namespace: string; vectorCount: number }>
   >([]);
+  const [deletingNs, setDeletingNs] = useState<string | null>(null);
+  const [deleteModalNs, setDeleteModalNs] = useState<string | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch("/api/code-chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "list" }),
-    })
+    fetch("/api/code-chat/list")
       .then((r) => r.json())
       .then((data) => {
         if (data.namespaces) setExistingNamespaces(data.namespaces);
       })
       .catch(() => {});
+
   }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  function openDeleteModal(ns: string) {
+    setDeleteModalNs(ns);
+    setDeleteConfirmInput("");
+  }
+
+  function closeDeleteModal() {
+    setDeleteModalNs(null);
+    setDeleteConfirmInput("");
+  }
+
+  async function confirmDelete() {
+    if (!deleteModalNs) return;
+    const ns = deleteModalNs;
+    if (deleteConfirmInput.trim() !== ns) return;
+
+    setDeletingNs(ns);
+    try {
+      await fetch("/api/code-chat/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ namespace: ns }),
+      });
+      setExistingNamespaces((prev) => prev.filter((item) => item.namespace !== ns));
+      closeDeleteModal();
+    } finally {
+      setDeletingNs(null);
+    }
+  }
+
   async function handleIndex() {
     if (!repoUrl.trim()) return;
     setPhase("indexing");
     setIndexProgress("正在连接 GitHub...");
     try {
-      const res = await fetch("/api/code-chat", {
+      const res = await fetch("/api/code-chat/index", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "index", repoUrl: repoUrl.trim() }),
+        body: JSON.stringify({ repoUrl: repoUrl.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "索引失败");
@@ -99,10 +129,10 @@ export default function CodeChatPage() {
     setMessages((prev) => [...prev, { user: q, ai: "", sources: [] }]);
 
     try {
-      const res = await fetch("/api/code-chat", {
+      const res = await fetch("/api/code-chat/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "chat", question: q, namespace, history }),
+        body: JSON.stringify({ question: q, namespace, history }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "问答失败");
@@ -188,10 +218,10 @@ export default function CodeChatPage() {
               <p className="text-xs text-zinc-500 font-mono uppercase tracking-widest">已索引的仓库</p>
               <div className="grid gap-2">
                 {existingNamespaces.map((item) => (
+                  <div key={item.namespace} className="relative group">
                   <button
-                    key={item.namespace}
                     onClick={() => { setNamespace(item.namespace); setPhase("chat"); }}
-                    className="flex items-center justify-between bg-zinc-900 border border-zinc-700 hover:border-blue-500/60 hover:bg-zinc-800 rounded-xl px-4 py-3 text-left transition-all group"
+                    className="w-full flex items-center justify-between bg-zinc-900 border border-zinc-700 hover:border-blue-500/60 hover:bg-zinc-800 rounded-xl px-4 py-3 text-left transition-all group"
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 text-sm">
@@ -206,7 +236,68 @@ export default function CodeChatPage() {
                       <span className="text-zinc-600 group-hover:text-blue-400 transition-colors">→</span>
                     </div>
                   </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); openDeleteModal(item.namespace); }}
+                    disabled={deletingNs === item.namespace}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg bg-zinc-800 hover:bg-red-500/20 text-zinc-500 hover:text-red-400 border border-zinc-700 hover:border-red-500/40 transition-all text-xs"
+                    title="删除索引"
+                  >
+                    {deletingNs === item.namespace ? "···" : "✕"}
+                  </button>
+                  </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* 删除确认弹窗：必须输入 namespace */}
+          {deleteModalNs && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) closeDeleteModal();
+              }}
+            >
+              <div className="w-full max-w-lg rounded-2xl bg-zinc-900 border border-zinc-700 p-6 space-y-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-white">确认删除索引</p>
+                  <p className="text-xs text-zinc-400 font-mono">
+                    该操作不可恢复。请输入要删除的 namespace 以确认：
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-mono">
+                    需要输入：<span className="text-red-300">{deleteModalNs}</span>
+                  </p>
+                  <input
+                    autoFocus
+                    value={deleteConfirmInput}
+                    onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") closeDeleteModal();
+                      if (e.key === "Enter") confirmDelete();
+                    }}
+                    placeholder="输入 namespace 以确认删除"
+                    className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-zinc-600 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/40 transition-colors"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={closeDeleteModal}
+                    className="text-xs px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 transition-colors font-mono"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    disabled={deleteConfirmInput.trim() !== deleteModalNs || deletingNs === deleteModalNs}
+                    className="text-xs px-3 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white border border-red-500/40 disabled:border-zinc-700 transition-colors font-mono"
+                  >
+                    {deletingNs === deleteModalNs ? "删除中···" : "确认删除"}
+                  </button>
+                </div>
               </div>
             </div>
           )}
