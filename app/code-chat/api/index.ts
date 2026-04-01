@@ -81,6 +81,16 @@ export function sanitizePineconeMetadata(input: unknown): Record<string, Pinecon
     return SKIP_PATHS.some(skip => parts.includes(skip));
   }
 
+  /**
+   * @desc 说明：对文件路径打优先级分，0 最优先，2 最低优先
+   * @param path
+   * @returns number
+   */
+  function getPriority(path: string): number {
+    if (/^(src|lib|core|app|pkg)\//.test(path)) return 0;
+    if (/(^|\/)(__tests__|tests?|specs?|docs|examples|fixtures|mocks)(\/|$)/.test(path)) return 2;
+    return 1;
+  }
 
   /**
    * @description 调用 GitHub API，返回过滤后的文件列表
@@ -135,6 +145,8 @@ export function sanitizePineconeMetadata(input: unknown): Record<string, Pinecon
           return SUPPORTED_EXTENSIONS.has(ext);
         })
         .filter((f) => f.size < 100 * 1024)
+        // 说明：先排序再截断，避免“先来先得”导致核心文件被挤掉
+        .sort((a, b) => getPriority(a.path) - getPriority(b.path))
         .slice(0, 200) ?? [];
 
     // 说明：返回文件列表
@@ -186,16 +198,19 @@ export async function fetchFilesInBatches(
   owner: string,
   repo: string,
   files: Array<{ path: string; size: number }>,
-  batchSize = 10
+  batchSize = 10,
+  onProgress?: (msg: string) => void
 ): Promise<Array<{ path: string; content: string }>> {
   // 提示：
   // 1. 用 for 循环按 batchSize 切片
   // 2. 每批用 Promise.all 并发
   // 3. 过滤掉 content 为 null 或空字符串的结果
   const results: Array<{ path: string; content: string }> = [];
+  const totalBatches = Math.max(1, Math.ceil(files.length / batchSize));
 
   for (let i = 0; i < files.length; i += batchSize) {
     const batch = files.slice(i, i + batchSize);
+    onProgress?.(`⏳ 拉取第 ${Math.floor(i / batchSize) + 1}/${totalBatches} 批文件（${batch.length} 个）...`);
 
     const batchResults = await Promise.all(
       batch.map(async (file) => {
@@ -268,9 +283,9 @@ export async function indexRepository(
   onProgress?.(`📁 发现并保留 ${files.length} 个文件（已过滤）`);
 
   // 4. fetchFilesInBatches → 拿到文件内容
-  onProgress?.("⏳ 批量拉取文件内容...");
-  const fileContents = await fetchFilesInBatches(owner, repo, files, 10);
-  onProgress?.(`📄 成功拉取 ${fileContents.length} 个文件内容`);
+  const fileContents = await fetchFilesInBatches(owner, repo, files, 10, onProgress);
+  const failedCount = files.length - fileContents.length;
+  onProgress?.(`📄 成功拉取 ${fileContents.length}/${files.length} 个文件${failedCount > 0 ? `（⚠️ ${failedCount} 个失败，可能触发限流）` : ""}`);
 
   // 5. 用 RecursiveCharacterTextSplitter 分块
   const splitter = new RecursiveCharacterTextSplitter({
@@ -315,11 +330,12 @@ export async function indexRepository(
     values: number[];
     metadata: Record<string, PineconeMetadataValue>;
   };
-  // 说明：创建 VectorRecord 对象
-  const vectors: VectorRecord[] = [];
+  // 说明：累计成功写入的 chunk 数量
+  let chunkCount = 0;
   // 说明：batchSize 为 50
   const batchSize = 50;
   const totalBatches = Math.max(1, Math.ceil(docs.length / batchSize));
+  const pineconeNs = pineconeIndex.namespace(namespace);
   // 说明：用 for 循环按 batchSize 切片
   for (let i = 0; i < docs.length; i += batchSize) {
     // 说明：按 batchSize 切片
@@ -337,16 +353,19 @@ export async function indexRepository(
           content: batch[j].pageContent,
         },
       }));
-      vectors.push(...batchVectors);
+      onProgress?.(`💾 写入 Pinecone 第 ${Math.floor(i / batchSize) + 1}/${totalBatches} 批（${batchVectors.length} 个）...`);
+      await pineconeNs.upsert({ records: batchVectors });
+      chunkCount += batchVectors.length;
     } catch {
-      console.warn(`[CodeChat][embed] Batch ${i}-${i + batch.length - 1} failed, skipping`);
+      onProgress?.(`⚠️ 第 ${Math.floor(i / batchSize) + 1}/${totalBatches} 批 Embedding 失败，已跳过`);
+      console.warn(`[CodeChat] Batch ${i}-${i + batch.length - 1} failed (embed or upsert), skipping`);
       // 跳过本批，继续后续批次
     }
   }
 
-  // 说明：如果 vectors 为空，直接返回
-  if (vectors.length === 0) {
-    onProgress?.("❌ Embedding 全部失败，未写入任何向量");
+  // 说明：如果 chunkCount 为空，直接返回
+  if (chunkCount === 0) {
+    onProgress?.("❌ 所有批次写入均失败，未写入任何向量");
     return {
       namespace,
       fileCount: fileContents.length,
@@ -354,9 +373,6 @@ export async function indexRepository(
       cached: false,
     };
   }
-  // 重要：写入指定 namespace，避免多个仓库数据混在默认 namespace（空字符串）里
-  onProgress?.("💾 写入 Pinecone...");
-  await pineconeIndex.namespace(namespace).upsert({ records: vectors });
   onProgress?.("✅ 索引完成！");
 
   // 7. 返回统计信息
@@ -366,7 +382,7 @@ export async function indexRepository(
     // 说明：返回 fileCount
     fileCount: fileContents.length,
     // 说明：返回 chunkCount
-    chunkCount: vectors.length,
+    chunkCount,
     // 说明：返回 cached
     cached: false,
   };
