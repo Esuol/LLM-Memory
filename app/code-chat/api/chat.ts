@@ -115,6 +115,29 @@ export async function condenseQuestion(llm: ChatOpenAI, question: string, histor
 }
 
 /**
+ * @description HyDE：生成“假设的代码答案”，用代码的 embedding 去检索（代码找代码）。
+ * @param llm LLM 实例
+ * @param question 独立问题（standalone question）
+ * @returns 假设答案（优先为代码片段）
+ */
+async function generateHypotheticalAnswer(llm: ChatOpenAI, question: string): Promise<string> {
+  const resp = await llm.invoke([
+    {
+      role: "system",
+      content:
+        "你是资深工程师。请直接输出一段“假设正确”的代码实现片段，用于回答用户的问题。只输出代码（可以包含少量行内注释），不要解释、不要前后缀、不要说'可能'、不要给多方案。",
+    },
+    {
+      role: "user",
+      content: `问题：${question}\n\n要求：只输出代码，优先 TypeScript/JavaScript（Node/Next.js 风格）。`,
+    },
+  ]);
+
+  const text = typeof resp.content === "string" ? resp.content.trim() : "";
+  return text || question;
+}
+
+/**
  * @description 基于指定仓库（namespace）的向量库进行带对话历史的 RAG 问答，并返回来源信息。
  * @param question 用户问题
  * @param namespace Pinecone namespace（建议用 owner-repo）
@@ -144,7 +167,7 @@ export async function chatWithRepo(
     configuration: process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : undefined,
   });
 
-  // 说明：创建 LLM 实例
+  // 说明：主回答 LLM（低温度，稳定、可控）
   const llm = new ChatOpenAI({
     model: "gpt-4o-mini",
     temperature: 0,
@@ -152,8 +175,20 @@ export async function chatWithRepo(
     configuration: process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : undefined,
   });
 
+  // 说明：HyDE 专用 LLM（稍高温度，让假设代码答案更多样）
+  const hydeLlm = new ChatOpenAI({
+    model: "gpt-4o-mini",
+    temperature: 0.7,
+    apiKey: process.env.OPENAI_API_KEY,
+    configuration: process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : undefined,
+  });
+
   // 1) Query condensation：history 为空时直接跳过（省一次 LLM 调用）
   const standaloneQuestion = history.length === 0 ? question : await condenseQuestion(llm, question, history);
+
+  // 1.5) HyDE：先生成“假设代码答案”，再用它做检索
+  const hydeQuery = await generateHypotheticalAnswer(hydeLlm, standaloneQuestion);
+  console.log('hydeQuery', hydeQuery);
 
   // 2) RAG 检索
   // 说明：从 Pinecone 中检索相关文档
@@ -162,7 +197,7 @@ export async function chatWithRepo(
     indexName,
     namespace,
     embeddings,
-    query: standaloneQuestion,
+    query: hydeQuery,
     k: 5,
   });
 
