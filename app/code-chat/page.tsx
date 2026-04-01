@@ -105,15 +105,62 @@ export default function CodeChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repoUrl: repoUrl.trim() }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "索引失败");
-      if (data.cached) {
-        setIndexProgress(`缓存命中，直接进入问答`);
-      } else {
-        setIndexProgress(`索引完成 · ${data.fileCount} 个文件 · ${data.chunkCount} 个文档块`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || "索引失败");
       }
-      setNamespace(data.namespace);
-      setTimeout(() => setPhase("chat"), 900);
+      if (!res.body) throw new Error("索引失败：无响应流");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE 事件以空行分隔：\n\n
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          const line = part
+            .split("\n")
+            .map((l) => l.trim())
+            .find((l) => l.startsWith("data:"));
+          if (!line) continue;
+
+          const payload = line.slice("data:".length).trim();
+          if (!payload) continue;
+
+          let evt: { type: "progress"; msg: string } | { type: "done"; result: { namespace: string; fileCount: number; chunkCount: number; cached: boolean } } | { type: "error"; message: string } | null = null;
+          try {
+            evt = JSON.parse(payload);
+          } catch {
+            // 忽略 JSON 解析失败的行
+          }
+          if (!evt) continue;
+
+          if (evt.type === "progress") {
+            setIndexProgress(evt.msg);
+          } else if (evt.type === "done") {
+            const data = evt.result;
+            if (data.cached) {
+              setIndexProgress("缓存命中，直接进入问答");
+            } else {
+              setIndexProgress(`索引完成 · ${data.fileCount} 个文件 · ${data.chunkCount} 个文档块`);
+            }
+            setNamespace(data.namespace);
+            setTimeout(() => setPhase("chat"), 900);
+            return;
+          } else if (evt.type === "error") {
+            throw new Error(evt.message || "索引失败");
+          }
+        }
+      }
+
+      throw new Error("索引失败：流已结束但未收到完成消息");
     } catch (err) {
       setIndexProgress(`错误：${err instanceof Error ? err.message : "索引失败"}`);
       setTimeout(() => setPhase("input"), 2500);
@@ -324,7 +371,7 @@ export default function CodeChatPage() {
             {[0, 1, 2].map((i) => (
               <div
                 key={i}
-                className="w-2 h-2 rounded-full bg-blue-500 animate-bounce"
+                className="w-2 h-2 rounded-full bg-blue-500 animate-[bounceBig_0.9s_infinite]"
                 style={{ animationDelay: `${i * 0.15}s` }}
               />
             ))}

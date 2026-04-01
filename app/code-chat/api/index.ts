@@ -218,13 +218,17 @@ export async function fetchFilesInBatches(
  *
  * @param repoUrl
  */
-export async function indexRepository(repoUrl: string): Promise<{
+export async function indexRepository(
+  repoUrl: string,
+  onProgress?: (msg: string) => void
+): Promise<{
   namespace: string;
   fileCount: number;
   chunkCount: number;
   cached: boolean;
 }> {
   // 1. parseGitHubUrl → 失败抛错 "无效的 GitHub 仓库地址"
+  onProgress?.("⏳ 解析仓库地址...");
   const parsed = parseGitHubUrl(repoUrl);
   if (!parsed) throw new Error("无效的 GitHub 仓库地址");
   const { owner, repo } = parsed;
@@ -234,6 +238,7 @@ export async function indexRepository(repoUrl: string): Promise<{
   const repoFullName = `${owner}/${repo}`;
 
   // 2. 检查 Pinecone namespace 是否已存在（describeIndexStats）
+  onProgress?.("⏳ 检查索引缓存...");
   // 说明：这里用固定 indexName；真实项目里建议把 indexName 抽到配置里
   const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "rag-demo";
   // 说明：获取 Pinecone index
@@ -248,6 +253,7 @@ export async function indexRepository(repoUrl: string): Promise<{
 
   // 说明：如果 namespace 已存在，直接返回缓存
   if (namespaceCount > 0) {
+    onProgress?.("✅ 缓存命中，直接进入问答");
     return {
       namespace,
       fileCount: 0,
@@ -257,10 +263,14 @@ export async function indexRepository(repoUrl: string): Promise<{
   }
 
   // 3. listRepoFiles → 拿到文件列表
+  onProgress?.("⏳ 获取文件列表...");
   const files = await listRepoFiles(owner, repo);
+  onProgress?.(`📁 发现并保留 ${files.length} 个文件（已过滤）`);
 
   // 4. fetchFilesInBatches → 拿到文件内容
+  onProgress?.("⏳ 批量拉取文件内容...");
   const fileContents = await fetchFilesInBatches(owner, repo, files, 10);
+  onProgress?.(`📄 成功拉取 ${fileContents.length} 个文件内容`);
 
   // 5. 用 RecursiveCharacterTextSplitter 分块
   const splitter = new RecursiveCharacterTextSplitter({
@@ -273,6 +283,7 @@ export async function indexRepository(repoUrl: string): Promise<{
   });
 
   // 说明：创建 Documents 对象
+  onProgress?.("📦 分块中...");
   const docs = (
     // 说明：用 Promise.all 并发处理文件内容
     await Promise.all(
@@ -286,6 +297,7 @@ export async function indexRepository(repoUrl: string): Promise<{
     )
     // 说明：将所有 Documents 对象扁平化
   ).flat();
+  onProgress?.(`📦 生成 ${docs.length} 个文档块`);
 
   // 6. 写入 Pinecone
   const embeddings = new OpenAIEmbeddings({
@@ -307,12 +319,14 @@ export async function indexRepository(repoUrl: string): Promise<{
   const vectors: VectorRecord[] = [];
   // 说明：batchSize 为 50
   const batchSize = 50;
+  const totalBatches = Math.max(1, Math.ceil(docs.length / batchSize));
   // 说明：用 for 循环按 batchSize 切片
   for (let i = 0; i < docs.length; i += batchSize) {
     // 说明：按 batchSize 切片
     const batch = docs.slice(i, i + batchSize);
     // 说明：一次批量 embedding（单次 HTTP 请求返回整批向量）
     try {
+      onProgress?.(`🔮 Embedding 第 ${Math.floor(i / batchSize) + 1}/${totalBatches} 批（${batch.length} 个）...`);
       const texts = batch.map((d) => d.pageContent);
       const allValues = await embeddings.embedDocuments(texts);
       const batchVectors: VectorRecord[] = allValues.map((values, j) => ({
@@ -332,6 +346,7 @@ export async function indexRepository(repoUrl: string): Promise<{
 
   // 说明：如果 vectors 为空，直接返回
   if (vectors.length === 0) {
+    onProgress?.("❌ Embedding 全部失败，未写入任何向量");
     return {
       namespace,
       fileCount: fileContents.length,
@@ -340,7 +355,9 @@ export async function indexRepository(repoUrl: string): Promise<{
     };
   }
   // 重要：写入指定 namespace，避免多个仓库数据混在默认 namespace（空字符串）里
+  onProgress?.("💾 写入 Pinecone...");
   await pineconeIndex.namespace(namespace).upsert({ records: vectors });
+  onProgress?.("✅ 索引完成！");
 
   // 7. 返回统计信息
   return {

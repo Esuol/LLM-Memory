@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { indexRepository } from "@/app/code-chat/api/index";
 
 type UnknownRecord = Record<string, unknown>;
@@ -12,18 +12,45 @@ function isRecord(v: unknown): v is UnknownRecord {
  * Body: { repoUrl: string }
  */
 export async function POST(req: NextRequest) {
-  try {
-    const body: unknown = await req.json();
-    if (!isRecord(body)) return NextResponse.json({ error: "invalid body" }, { status: 400 });
+  const encoder = new TextEncoder();
 
-    const repoUrl = typeof body.repoUrl === "string" ? body.repoUrl.trim() : "";
-    if (!repoUrl) return NextResponse.json({ error: "repoUrl 不能为空" }, { status: 400 });
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: unknown) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      };
 
-    const result = await indexRepository(repoUrl);
-    return NextResponse.json({ success: true, ...result });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "index failed";
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+      try {
+        const body: unknown = await req.json();
+        if (!isRecord(body)) {
+          send({ type: "error", message: "invalid body" });
+          controller.close();
+          return;
+        }
+
+        const repoUrl = typeof body.repoUrl === "string" ? body.repoUrl.trim() : "";
+        if (!repoUrl) {
+          send({ type: "error", message: "repoUrl 不能为空" });
+          controller.close();
+          return;
+        }
+
+        const result = await indexRepository(repoUrl, (msg) => send({ type: "progress", msg }));
+        send({ type: "done", result });
+      } catch (err: unknown) {
+        send({ type: "error", message: err instanceof Error ? err.message : "index failed" });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
 }
 
