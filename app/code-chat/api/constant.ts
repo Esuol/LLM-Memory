@@ -11,3 +11,7 @@
     ".md", ".json", ".yaml", ".yml",
     ".css", ".html", ".vue", ".svelte",
   ]);
+
+  // Pinecone 的 Index 名称（抽取为常量，避免硬编码分散在各处）
+  export const PINECONE_INDEX_NAME =
+    process.env.PINECONE_CODE_CHAT_INDEX_NAME || "code-search";

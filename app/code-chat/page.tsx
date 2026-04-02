@@ -3,6 +3,9 @@
 
 import { useState, useRef, useEffect } from "react";
 import { flushSync } from "react-dom";
+import ReactMarkdown from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 type Phase = "input" | "indexing" | "chat";
 
@@ -16,6 +19,7 @@ interface Message {
   user: string;
   ai: string;
   sources: Source[];
+  streaming?: boolean;
 }
 
 const LANG_COLORS: Record<string, string> = {
@@ -174,7 +178,7 @@ export default function CodeChatPage() {
     setQuestion("");
     setLoading(true);
     const history = messages.map((m) => ({ user: m.user, ai: m.ai }));
-    setMessages((prev) => [...prev, { user: q, ai: "", sources: [] }]);
+    setMessages((prev) => [...prev, { user: q, ai: "", sources: [], streaming: true }]);
 
     try {
       const res = await fetch("/api/code-chat/chat", {
@@ -246,6 +250,12 @@ export default function CodeChatPage() {
               break;
             }
             case "done": {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                updated[updated.length - 1] = { ...last, streaming: false };
+                return updated;
+              });
               return;
             }
             case "error": {
@@ -519,7 +529,39 @@ export default function CodeChatPage() {
                       </span>
                     ) : (
                       <>
-                        {m.ai}
+                        {m.streaming ? (
+                          <span className="whitespace-pre-wrap">{m.ai}</span>
+                        ) : (
+                          <div className="[&_p]:my-0 [&_ul]:my-0 [&_ol]:my-0 [&_pre]:my-0">
+                            <ReactMarkdown
+                              components={{
+                                code({ className, children, ...props }) {
+                                  const match = /language-(\w+)/.exec(className || "");
+                                  const isBlock = match !== null;
+                                  return isBlock ? (
+                                    <SyntaxHighlighter
+                                      style={oneDark}
+                                      language={match[1]}
+                                      PreTag="div"
+                                      customStyle={{ margin: 0, borderRadius: "0.5rem" }}
+                                    >
+                                      {String(children).replace(/\n$/, "")}
+                                    </SyntaxHighlighter>
+                                  ) : (
+                                    <code
+                                      className="bg-zinc-800 px-1 rounded text-blue-300 text-sm font-mono"
+                                      {...props}
+                                    >
+                                      {children}
+                                    </code>
+                                  );
+                                },
+                              }}
+                            >
+                              {m.ai}
+                            </ReactMarkdown>
+                          </div>
+                        )}
                         {m.sources.length > 0 && (
                           <p className="text-xs text-blue-400/70 mt-2 font-mono">
                             📎 {m.sources.length} sources · 点击查看
@@ -566,9 +608,13 @@ export default function CodeChatPage() {
                   <p className="text-xs font-mono text-blue-400 break-all leading-relaxed">{s.file}</p>
                   <LangBadge lang={s.language} />
                 </div>
-                <pre className="text-xs text-zinc-400 bg-black/30 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
+                <SyntaxHighlighter
+                  style={oneDark}
+                  language={s.language}
+                  customStyle={{ fontSize: "0.75rem", borderRadius: "0.5rem", margin: 0 }}
+                >
                   {s.content}
-                </pre>
+                </SyntaxHighlighter>
               </div>
             ))
           )}

@@ -1,7 +1,7 @@
 import { Pinecone } from "@pinecone-database/pinecone";
 import { OpenAIEmbeddings } from "@langchain/openai";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { SKIP_PATHS, SUPPORTED_EXTENSIONS } from "./constant";
+import { SKIP_PATHS, SUPPORTED_EXTENSIONS, PINECONE_INDEX_NAME } from "./constant";
 import { withRetry } from "./utils";
 
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
@@ -97,14 +97,14 @@ export function sanitizePineconeMetadata(input: unknown): Record<string, Pinecon
    * @description 调用 GitHub API，返回过滤后的文件列表
    * @param owner GitHub 仓库所有者
    * @param repo GitHub 仓库名称
-   * @returns Array<{ path: string; size: number }>
+   * @returns Array<{ path: string; size: number; sha: string }>
    * @example
    * listRepoFiles('vercel', 'next.js') => [{ path: 'src/app/page.tsx', size: 1024 }]
    */
   export async function listRepoFiles(
     owner: string,
     repo: string
-  ): Promise<Array<{ path: string; size: number }>> {
+  ): Promise<Array<{ path: string; size: number; sha: string }>> {
     const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`;
 
     const res = await fetch(url, {
@@ -130,13 +130,13 @@ export function sanitizePineconeMetadata(input: unknown): Record<string, Pinecon
     }
 
     const data: {
-      tree?: Array<{ path?: string; type?: "blob" | "tree"; size?: number }>;
+      tree?: Array<{ path?: string; type?: "blob" | "tree"; size?: number; sha?: string }>;
     } = await res.json();
 
     const files =
       data.tree
         ?.filter((item) => item.type === "blob")
-        .map((item) => ({ path: item.path ?? "", size: item.size ?? 0 }))
+        .map((item) => ({ path: item.path ?? "", size: item.size ?? 0, sha: item.sha ?? "" }))
         .filter((f) => f.path && f.size > 0)
         .filter((f) => !shouldSkip(f.path))
         .filter((f) => {
@@ -259,8 +259,8 @@ export async function indexRepository(
 
   // 2. 检查 Pinecone namespace 是否已存在（describeIndexStats）
   onProgress?.("⏳ 检查索引缓存...");
-  // 说明：这里用固定 indexName；真实项目里建议把 indexName 抽到配置里
-  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "rag-demo";
+  // 说明：使用常量配置的 Index 名称
+  const indexName = PINECONE_INDEX_NAME;
   // 说明：获取 Pinecone index
   const pineconeIndex = pinecone.Index(indexName);
   // 说明：获取 Pinecone namespace 统计信息
@@ -268,7 +268,6 @@ export async function indexRepository(
     namespaces?: Record<string, { recordCount?: number; vectorCount?: number }>;
   };
 
-  // 说明：这里用固定 indexName；真实项目里建议把 indexName 抽到配置里
   const namespaceCount = stats.namespaces?.[namespace]?.recordCount ?? stats.namespaces?.[namespace]?.vectorCount ?? 0;
 
   // 说明：如果 namespace 已存在，直接返回缓存
@@ -409,7 +408,7 @@ export async function indexRepository(
  */
 export async function listNamespaces(): Promise<Array<{ namespace: string; vectorCount: number }>> {
   // 说明：获取 Pinecone index
-  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || 'code-search';
+  const indexName = PINECONE_INDEX_NAME;
   const pineconeIndex = pinecone.Index(indexName);
   // 说明：获取 Pinecone namespace 统计信息
   const stats = (await pineconeIndex.describeIndexStats()) as unknown as {
@@ -426,7 +425,7 @@ export async function listNamespaces(): Promise<Array<{ namespace: string; vecto
  * @description 删除 Pinecone 中指定 namespace 的所有向量
  */
 export async function deleteNamespace(namespace: string): Promise<void> {
-  const indexName = process.env.PINECONE_CODE_CHAT_INDEX_NAME || "rag-demo";
+  const indexName = PINECONE_INDEX_NAME;
   const pineconeIndex = pinecone.Index(indexName);
   await pineconeIndex.namespace(namespace).deleteAll();
 }

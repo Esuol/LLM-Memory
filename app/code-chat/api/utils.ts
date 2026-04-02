@@ -43,6 +43,23 @@ export async function withRetry<T>(
 }
 
 /**
+ * @description 比对新旧文件列表，返回需要处理的文件（新增/修改/删除）
+ */
+export function diffSnapshots(
+  oldSnapshots: Array<{ path: string; sha: string }>,
+  newSnapshots: Array<{ path: string; sha: string }>
+) {
+  const oldMap = new Map(oldSnapshots.map((f) => [f.path, f.sha]));
+  const newMap = new Map(newSnapshots.map((f) => [f.path, f.sha]));
+
+  return {
+    toAdd: newSnapshots.filter((f) => !oldMap.has(f.path)),
+    toUpdate: newSnapshots.filter((f) => oldMap.get(f.path) !== f.sha),
+    toDelete: oldSnapshots.filter((f) => !newMap.has(f.path)),
+  };
+}
+
+/**
  * @description 创建 SSE（Server-Sent Events）响应。
  *
  * 输出格式：每条消息会被序列化为 JSON，并以 `data: ...\n\n` 写入。
