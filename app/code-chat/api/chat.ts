@@ -62,6 +62,76 @@ async function retrieveFromPinecone(opts: {
 }
 
 /**
+ * @description 上下文压缩：从检索到的文档中只保留最相关的几个
+ * 策略：让 LLM 评分每个 chunk，只保留 top-3 到 top-5
+ *
+ * @param llm LLM 实例（用低温度模型，保证稳定）
+ * @param question 用户问题
+ * @param docs 候选文档（通常是 20 个）
+ * @param topK 保留几个（默认 5）
+ * @returns 压缩后的文档
+ */
+async function compressContext(
+  llm: ChatOpenAI,
+  question: string,
+  docs: Document[],
+  topK: number = 5
+): Promise<Document[]> {
+  if (docs.length <= topK) {
+    return docs; // 如果本来就少于 topK，不用压缩
+  }
+
+  // 准备候选片段列表
+  const candidates = docs
+    .slice(0, 20) // 只评估前 20 个（检索结果通常已排序）
+    .map((d, i) => {
+      const file = (d.metadata?.file as string) || "unknown";
+      const preview = d.pageContent.slice(0, 200).replace(/\s+/g, " ").trim();
+      return `${i + 1}. [${file}] ${preview}...`;
+    })
+    .join("\n");
+
+  // 让 LLM 选择最相关的
+  const resp = await llm.invoke([
+    {
+      role: "system",
+      content: `你是代码检索助手。给定问题和多个代码片段，请选出最直接回答问题的 ${topK} 个片段。
+只输出片段编号，按相关性从高到低排序，用逗号分隔。例如：3,1,5,2,4
+不要解释，不要多余的字。`,
+    },
+    {
+      role: "user",
+      content: `问题：${question}\n\n候选片段：\n${candidates}\n\n输出编号：`,
+    },
+  ]);
+
+  // 解析 LLM 输出的编号
+  const text = typeof resp.content === "string" ? resp.content : "";
+  const nums = text.match(/\d+/g)?.map((n) => Number.parseInt(n, 10)) ?? [];
+
+  // 去重 + 保留有效范围内的编号
+  const selected: number[] = [];
+  for (const n of nums) {
+    if (!Number.isFinite(n)) continue;
+    if (n < 1 || n > docs.length) continue;
+    if (selected.includes(n)) continue;
+    selected.push(n);
+    if (selected.length >= topK) break;
+  }
+
+  // 降级：如果 LLM 输出有问题，就直接取前 topK 个
+  if (selected.length === 0) {
+    return docs.slice(0, topK);
+  }
+
+  // 按原始顺序返回（保持代码片段的逻辑顺序）
+  return selected
+    .map((idx) => docs[idx - 1])
+    .filter(Boolean)
+    .slice(0, topK);
+}
+
+/**
  * @description 去重来源文档
  * @param sourceDocs 来源文档
  * @returns 去重后的来源文档
@@ -202,11 +272,13 @@ export async function chatWithRepo(
     k: 20,
   });
 
-  // 3) 用检索结果生成最终回答
-  // 说明：长上下文模型可直接处理多个片段；不需要 rerank
-  const context = sourceDocuments.map((d) => d.pageContent).join("\n\n---\n\n");
+  // 2.5) 【新增】上下文压缩：从 20 个 chunks 只保留最相关的 5 个
+  const compressedDocuments = await compressContext(llm, standaloneQuestion, sourceDocuments, 5);
 
-  const sources = dedupeSources(sourceDocuments);
+  // 3) 用压缩后的文档生成最终回答
+  const context = compressedDocuments.map((d) => d.pageContent).join("\n\n---\n\n");
+
+  const sources = dedupeSources(compressedDocuments);
   opts?.onSources?.(sources);
 
   // 说明：使用 LLM 生成回答（支持流式回调）
