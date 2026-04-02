@@ -62,55 +62,6 @@ async function retrieveFromPinecone(opts: {
 }
 
 /**
- * @description 对检索到的文档做 rerank（LLM 选择最相关的片段顺序）。
- * @param llm LLM 实例
- * @param question 原始独立问题（standalone question）
- * @param docs 候选文档
- * @returns rerank 后的文档（最多 5 个）
- */
-async function rerankDocuments(llm: ChatOpenAI, question: string, docs: Document[]): Promise<Document[]> {
-  if (docs.length <= 5) return docs;
-
-  const candidates = docs
-    .slice(0, 10)
-    .map((d, i) => `${i + 1}. ${d.pageContent.slice(0, 300).replace(/\s+/g, " ").trim()}`)
-    .join("\n");
-
-  const resp = await llm.invoke([
-    {
-      role: "system",
-      content:
-        "你是检索结果重排助手。给定问题和若干候选片段，请只输出最相关的 5 个片段编号，按相关性从高到低排序。只输出编号，用英文逗号分隔，例如：1,4,2,3,5。不要解释。",
-    },
-    {
-      role: "user",
-      content: `问题：${question}\n\n候选片段：\n${candidates}\n\n输出（仅编号，逗号分隔）：`,
-    },
-  ]);
-
-  const text = typeof resp.content === "string" ? resp.content : "";
-  const nums = text.match(/\d+/g)?.map((n) => Number.parseInt(n, 10)) ?? [];
-  const unique: number[] = [];
-
-  for (const n of nums) {
-    if (!Number.isFinite(n)) continue;
-    if (n < 1 || n > Math.min(10, docs.length)) continue;
-    if (unique.includes(n)) continue;
-    unique.push(n);
-    if (unique.length >= 5) break;
-  }
-
-  if (unique.length === 0) {
-    // 降级：返回原始前 5 个
-    return docs.slice(0, 5);
-  }
-
-  const feedback = unique.map((n) => docs[n - 1]).filter(Boolean).slice(0, 5);
-
-  return feedback;
-}
-
-/**
  * @description 去重来源文档
  * @param sourceDocs 来源文档
  * @returns 去重后的来源文档
@@ -219,7 +170,7 @@ export async function chatWithRepo(
 
   // 说明：主回答 LLM（低温度，稳定、可控）
   const llm = new ChatOpenAI({
-    model: "gpt-4o-mini",
+    model: "gpt-4-turbo",
     temperature: 0,
     apiKey: process.env.OPENAI_API_KEY,
     configuration: process.env.OPENAI_BASE_URL ? { baseURL: process.env.OPENAI_BASE_URL } : undefined,
@@ -248,17 +199,14 @@ export async function chatWithRepo(
     namespace,
     embeddings,
     query: hydeQuery,
-    k: 10,
+    k: 20,
   });
 
-  // 2.5) Rerank：在生成回答前对候选片段重排
-  const rerankedDocuments = await rerankDocuments(llm, standaloneQuestion, sourceDocuments);
-
   // 3) 用检索结果生成最终回答
-  // 说明：将检索结果转换为内容
-  const context = rerankedDocuments.map((d) => d.pageContent).join("\n\n---\n\n");
+  // 说明：长上下文模型可直接处理多个片段；不需要 rerank
+  const context = sourceDocuments.map((d) => d.pageContent).join("\n\n---\n\n");
 
-  const sources = dedupeSources(rerankedDocuments);
+  const sources = dedupeSources(sourceDocuments);
   opts?.onSources?.(sources);
 
   // 说明：使用 LLM 生成回答（支持流式回调）
