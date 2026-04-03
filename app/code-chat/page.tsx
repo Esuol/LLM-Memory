@@ -20,6 +20,7 @@ interface Message {
   ai: string;
   sources: Source[];
   streaming?: boolean;
+  debug?: { before: number; after: number; files: string[] };
 }
 
 const LANG_COLORS: Record<string, string> = {
@@ -219,6 +220,7 @@ export default function CodeChatPage() {
               return JSON.parse(payload) as
                 | { type: "chunk"; token: string }
                 | { type: "sources"; sources: Source[] }
+                | { type: "debug"; debug: { before: number; after: number; files: string[] } }
                 | { type: "done" }
                 | { type: "error"; message: string };
             } catch {
@@ -247,6 +249,15 @@ export default function CodeChatPage() {
                 return updated;
               });
               setCurrentSources(evt.sources ?? []);
+              break;
+            }
+            case "debug": {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                updated[updated.length - 1] = { ...last, debug: evt.debug };
+                return updated;
+              });
               break;
             }
             case "done": {
@@ -565,6 +576,11 @@ export default function CodeChatPage() {
                         {m.sources.length > 0 && (
                           <p className="text-xs text-blue-400/70 mt-2 font-mono">
                             📎 {m.sources.length} sources · 点击查看
+                          </p>
+                        )}
+                        {m.debug && (
+                          <p className="text-xs text-amber-400/70 mt-1 font-mono">
+                            ✓ 压缩: {m.debug.before} → {m.debug.after} | {m.debug.files.join(", ")}
                           </p>
                         )}
                       </>

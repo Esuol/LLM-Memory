@@ -47,6 +47,9 @@ export async function POST(req: NextRequest) {
       onSources(sources) {
         send({ type: "sources", sources });
       },
+      onDebug(debug) {
+        send({ type: "debug", debug });
+      },
     });
 
     send({ type: "done" });

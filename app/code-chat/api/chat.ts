@@ -223,6 +223,7 @@ export async function chatWithRepo(
   opts?: {
     onChunk?: (token: string) => void;
     onSources?: (sources: SourceItem[]) => void;
+    onDebug?: (debug: { before: number; after: number; files: string[] }) => void;
   }
 ) {
   const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
@@ -274,6 +275,15 @@ export async function chatWithRepo(
 
   // 2.5) 【新增】上下文压缩：从 20 个 chunks 只保留最相关的 5 个
   const compressedDocuments = await compressContext(llm, standaloneQuestion, sourceDocuments, 5);
+
+  // 【调试】压缩效果统计
+  const debugInfo = {
+    before: sourceDocuments.length,
+    after: compressedDocuments.length,
+    files: compressedDocuments.map(d => d.metadata?.file as string)
+  };
+  console.log(`[压缩效果] ${debugInfo.before} → ${debugInfo.after} | 文件: ${debugInfo.files.join(", ")}`);
+  opts?.onDebug?.(debugInfo);
 
   // 3) 用压缩后的文档生成最终回答
   const context = compressedDocuments.map((d) => d.pageContent).join("\n\n---\n\n");
